@@ -1,0 +1,6 @@
+
+format:
+  pdf:
+    documentclass: scrartcl
+    toc: false
+    number-sections: true

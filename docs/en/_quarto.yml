@@ -1,0 +1,153 @@
+project:
+  type: book
+  output-dir: ../_output/en
+
+lang: en
+
+bibliography: ../resources.bib
+
+book:
+  title: "Introduction to Computer Architecture"
+  subtitle: "Laboratory Manual"
+  author: "Łukasz Kmiecik"
+  date: today
+  chapters: 
+    - index.qmd
+    - part: "Exercises"
+      chapters:
+        - labs/lab0.qmd
+        - labs/lab1.qmd
+        - labs/lab2.qmd
+        - labs/lab3.qmd
+        - labs/lab4.qmd
+        - labs/lab5.qmd
+
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: false
+    code-copy: true
+    code-overflow: wrap
+    include-in-header:
+      text: |
+        <style>
+        div.csl-bib-body, div.refs {
+          margin-top: 3.5rem;
+          padding-top: 1.5rem;
+          border-top: 1.5px solid #CBD5E1;
+        }
+        </style>
+  pdf:
+    keep-tex: true
+    documentclass: scrreprt
+    shift-heading-level-by: 0
+    number-sections: true
+    number-depth: 3
+    toc: true
+    toc-depth: 2
+    papersize: a4
+    geometry: 
+      - top=25mm
+      - bottom=25mm
+      - left=25mm
+      - right=25mm
+    pdf-engine: xelatex
+    colorlinks: true
+    linkcolor: teal
+    urlcolor: blue
+    highlight-style: github
+    include-in-header:
+      text: |
+        \usepackage[sfdefault]{roboto}
+        \usepackage[scaled=0.92]{inconsolata}
+        \usepackage{xcolor}
+        \usepackage{booktabs}
+        \usepackage{needspace}
+        \usepackage[export]{adjustbox}
+        \usepackage{fvextra}
+        \fvset{breaklines=true}
+
+        % Brand color palette
+        \definecolor{primarycolor}{HTML}{1A365D}   % Deep Navy
+        \definecolor{secondarycolor}{HTML}{0D9488} % Deep Teal
+        \definecolor{accentblue}{HTML}{0284C7}     % Cerulean Blue
+        \definecolor{textdark}{HTML}{1E293B}       % Slate Text
+        \definecolor{ruledark}{HTML}{CBD5E1}       % Subtle borders
+
+        % Global image clamping and centering (prevents Mermaid/diagram overflow)
+        \let\oldincludegraphics\includegraphics
+        \renewcommand{\includegraphics}[2][]{%
+          \oldincludegraphics[#1,max width=\linewidth,max height=0.85\textheight,keepaspectratio,center]{#2}%
+        }
+
+        % Prevent awkward table and callout splits across pages
+        \renewcommand{\arraystretch}{1.25}
+        \BeforeBeginEnvironment{longtable}{\Needspace{12\baselineskip}}
+        \BeforeBeginEnvironment{tcolorbox}{\Needspace{8\baselineskip}}
+
+        % Separate bibliography onto a new page in PDF
+        \AtBeginEnvironment{CSLReferences}{\clearpage}
+
+        % Override Quarto callout settings and colors at document begin
+        \AtBeginDocument{
+          \definecolor{quarto-callout-color}{HTML}{0D9488}
+          \definecolor{quarto-callout-color-frame}{HTML}{14B8A6}
+          \definecolor{quarto-callout-note-color}{HTML}{0284C7}
+          \definecolor{quarto-callout-note-color-frame}{HTML}{38BDF8}
+          \definecolor{quarto-callout-tip-color}{HTML}{059669}
+          \definecolor{quarto-callout-tip-color-frame}{HTML}{34D399}
+          \definecolor{quarto-callout-important-color}{HTML}{DC2626}
+          \definecolor{quarto-callout-important-color-frame}{HTML}{F87171}
+          \definecolor{quarto-callout-warning-color}{HTML}{D97706}
+          \definecolor{quarto-callout-warning-color-frame}{HTML}{FBBF24}
+          \tcbset{breakable/.code={}}
+          \setcounter{chapter}{-1}
+          \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere=true,commandchars=\\\{\}}
+        }
+
+        % Headings styling (KOMA-Script)
+        \KOMAoptions{parskip=half}
+        \addtokomafont{chapter}{\color{primarycolor}\bfseries}
+        \addtokomafont{section}{\color{primarycolor}\bfseries}
+        \addtokomafont{subsection}{\color{primarycolor!90!black}\bfseries}
+        \addtokomafont{subsubsection}{\color{primarycolor!80!black}\bfseries}
+        \renewcommand*{\chapterformat}{\textcolor{secondarycolor}{Lab~\thechapter:}\enskip}
+        \addtokomafont{part}{\color{primarycolor}\bfseries\Huge}
+        \addtokomafont{partnumber}{\color{secondarycolor}\bfseries\huge}
+
+        % Captions styling
+        \setkomafont{caption}{\small\sffamily}
+        \setkomafont{captionlabel}{\small\sffamily\bfseries\color{primarycolor}}
+
+        % Headers and footers
+        \usepackage[headsepline=0.5pt,footsepline=0pt]{scrlayer-scrpage}
+        \pagestyle{scrheadings}
+        \clearpairofpagestyles
+        \ihead{\normalfont\footnotesize\sffamily\color{gray!80!black} Introduction to Computer Architecture}
+        \ohead{\normalfont\footnotesize\sffamily\color{secondarycolor}\headmark}
+        \ofoot{\normalfont\footnotesize\sffamily\color{gray!80!black}\pagemark}
+        \automark[section]{chapter}
+        \setkomafont{headsepline}{\color{ruledark}}
+
+        % Elegant custom title page
+        \renewcommand{\maketitle}{%
+          \begin{titlepage}
+            \thispagestyle{empty}
+            \vspace*{2.5cm}
+            {\noindent\fontsize{32}{38}\selectfont\bfseries\color{primarycolor} Introduction to\\Computer Architecture\par}
+            \vspace{0.8em}
+            {\noindent\fontsize{18}{22}\selectfont\color{secondarycolor} Laboratory Manual\par}
+            \vspace{1.5em}
+            {\noindent\color{secondarycolor}\rule{\linewidth}{2.5pt}\par}
+            \vspace{0.4em}
+            {\noindent\color{ruledark}\rule{0.4\linewidth}{1pt}\par}
+            \vfill
+            {\noindent\normalsize\color{gray!80!black}Author:\par}
+            \vspace{0.2em}
+            {\noindent\large\bfseries\color{primarycolor} Łukasz Kmiecik\par}
+            \vspace{0.8em}
+            {\noindent\small\color{gray!80!black} Compiled: \today\par}
+            \vspace{1.5cm}
+          \end{titlepage}
+        }

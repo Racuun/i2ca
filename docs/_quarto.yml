@@ -1,0 +1,18 @@
+project:
+  type: book
+  output-dir: _output
+
+bibliography: ./resources.bib
+
+format:
+  pdf:
+    documentclass: scrreprt
+    number-sections: true
+    toc: true
+    papersize: a4
+    geometry: 
+      - top=25mm
+      - bottom=25mm
+      - left=25mm
+      - right=25mm
+    pdf-engine: xelatex

@@ -1,0 +1,5 @@
+# Preface {.unnumbered}
+
+Welcome to the laboratory manual for **Introduction to Computer Architecture**.
+
+This course provides a hands-on introduction to digital logic, processor architecture, and the RISC-V instruction set. Through these laboratory exercises, you will design, simulate, and test a working 32-bit RISC-V (RV32I) processor core using the **Digital** logic simulator.
