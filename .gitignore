@@ -1,0 +1,29 @@
+# Quarto temporary files and build outputs
+/.quarto/
+.quarto/
+docs/_output/
+docs/en/.quarto/
+docs/en/labs/*_files/
+docs/en/labs/*.pdf
+docs/en/labs/*.html
+docs/en/*.tex
+docs/en/labs/*.tex
+**/*.quarto_ipynb
+
+# Python temporary files
+__pycache__/
+*.pyc
+
+# Local IDE / assistant settings
+.antigravity/
+.agents/
+
+# Bare-metal software build outputs
+lab-package/software/*.elf
+lab-package/software/*.bin
+lab-package/software/*.hex
+lab-package/software/*.o
+
+# Keep RV32I verification test library in scripts
+!lab-package/scripts/tests_rv32i/
+!lab-package/scripts/tests_rv32i/**
