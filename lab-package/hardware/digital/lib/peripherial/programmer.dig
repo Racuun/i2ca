@@ -1,0 +1,286 @@
+<?xml version="1.0" encoding="utf-8"?>
+<circuit>
+  <version>2</version>
+  <attributes>
+    <entry>
+      <string>backgroundColor</string>
+      <awt-color>
+        <red>255</red>
+        <green>204</green>
+        <blue>153</blue>
+        <alpha>255</alpha>
+      </awt-color>
+    </entry>
+    <entry>
+      <string>Description</string>
+      <string>UART based memory programator for FPGA synthesis.
+Can share bus with other controler.
+
+Parameters:
+CLK (1MHz) - Global clock
+BAUD RATE (9600)
+OVERSAMPLING (16)
+LOW_TIME_MS (100) - UART line hold low time (in ms) for module to wake up
+TIMEOUT_MS (1000) - Timeout time in ms
+
+Parameters can be change in verilog if needed.</string>
+    </entry>
+    <entry>
+      <string>Label</string>
+      <string>Memory Programmer Module</string>
+    </entry>
+    <entry>
+      <string>romContent</string>
+      <romList>
+        <roms/>
+      </romList>
+    </entry>
+    <entry>
+      <string>Width</string>
+      <int>7</int>
+    </entry>
+  </attributes>
+  <visualElements>
+    <visualElement>
+      <elementName>Out</elementName>
+      <elementAttributes>
+        <entry>
+          <string>rotation</string>
+          <rotation rotation="2"/>
+        </entry>
+        <entry>
+          <string>Label</string>
+          <string>TX_UART</string>
+        </entry>
+      </elementAttributes>
+      <pos x="440" y="180"/>
+    </visualElement>
+    <visualElement>
+      <elementName>In</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>RX_UART</string>
+        </entry>
+        <entry>
+          <string>InDefault</string>
+          <value v="1" z="false"/>
+        </entry>
+      </elementAttributes>
+      <pos x="440" y="220"/>
+    </visualElement>
+    <visualElement>
+      <elementName>ExternalFile</elementName>
+      <elementAttributes>
+        <entry>
+          <string>applicationType</string>
+          <appType>IVERILOG</appType>
+        </entry>
+        <entry>
+          <string>Label</string>
+          <string>uart_programmer</string>
+        </entry>
+        <entry>
+          <string>externalInputs</string>
+          <string>clk,rst_n,uart_rx</string>
+        </entry>
+        <entry>
+          <string>Width</string>
+          <int>8</int>
+        </entry>
+        <entry>
+          <string>externalOutputs</string>
+          <string>uart_tx,waddr:32,wdata:32,d_valid,rst_req_n</string>
+        </entry>
+        <entry>
+          <string>CodeFile</string>
+          <file>programmer_uart/uart_programmer.v</file>
+        </entry>
+      </elementAttributes>
+      <pos x="620" y="260"/>
+    </visualElement>
+    <visualElement>
+      <elementName>In</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Description</string>
+          <string>Clock (default 1MHz)</string>
+        </entry>
+        <entry>
+          <string>Label</string>
+          <string>CLK</string>
+        </entry>
+      </elementAttributes>
+      <pos x="440" y="360"/>
+    </visualElement>
+    <visualElement>
+      <elementName>In</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Description</string>
+          <string>Active low</string>
+        </entry>
+        <entry>
+          <string>rotation</string>
+          <rotation rotation="1"/>
+        </entry>
+        <entry>
+          <string>Label</string>
+          <string>RST_N</string>
+        </entry>
+      </elementAttributes>
+      <pos x="580" y="400"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Out</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Description</string>
+          <string>Address to which data will be writen</string>
+        </entry>
+        <entry>
+          <string>Label</string>
+          <string>ADDR</string>
+        </entry>
+        <entry>
+          <string>Bits</string>
+          <int>32</int>
+        </entry>
+      </elementAttributes>
+      <pos x="920" y="280"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Out</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Description</string>
+          <string>Data to be writen</string>
+        </entry>
+        <entry>
+          <string>Label</string>
+          <string>DATA</string>
+        </entry>
+        <entry>
+          <string>Bits</string>
+          <int>32</int>
+        </entry>
+      </elementAttributes>
+      <pos x="920" y="320"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Out</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Description</string>
+          <string>Data valid flag, also writing signal.</string>
+        </entry>
+        <entry>
+          <string>Label</string>
+          <string>VALID</string>
+        </entry>
+      </elementAttributes>
+      <pos x="920" y="360"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Out</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Description</string>
+          <string>Asserting global reset (active low)</string>
+        </entry>
+        <entry>
+          <string>rotation</string>
+          <rotation rotation="1"/>
+        </entry>
+        <entry>
+          <string>Label</string>
+          <string>RST_RQ_N</string>
+        </entry>
+      </elementAttributes>
+      <pos x="860" y="180"/>
+    </visualElement>
+  </visualElements>
+  <wires>
+    <wire>
+      <p1 x="900" y="320"/>
+      <p2 x="920" y="320"/>
+    </wire>
+    <wire>
+      <p1 x="780" y="320"/>
+      <p2 x="880" y="320"/>
+    </wire>
+    <wire>
+      <p1 x="780" y="260"/>
+      <p2 x="820" y="260"/>
+    </wire>
+    <wire>
+      <p1 x="520" y="260"/>
+      <p2 x="620" y="260"/>
+    </wire>
+    <wire>
+      <p1 x="440" y="180"/>
+      <p2 x="820" y="180"/>
+    </wire>
+    <wire>
+      <p1 x="780" y="340"/>
+      <p2 x="860" y="340"/>
+    </wire>
+    <wire>
+      <p1 x="440" y="360"/>
+      <p2 x="520" y="360"/>
+    </wire>
+    <wire>
+      <p1 x="880" y="360"/>
+      <p2 x="920" y="360"/>
+    </wire>
+    <wire>
+      <p1 x="580" y="280"/>
+      <p2 x="620" y="280"/>
+    </wire>
+    <wire>
+      <p1 x="780" y="280"/>
+      <p2 x="920" y="280"/>
+    </wire>
+    <wire>
+      <p1 x="440" y="220"/>
+      <p2 x="480" y="220"/>
+    </wire>
+    <wire>
+      <p1 x="480" y="300"/>
+      <p2 x="620" y="300"/>
+    </wire>
+    <wire>
+      <p1 x="780" y="300"/>
+      <p2 x="900" y="300"/>
+    </wire>
+    <wire>
+      <p1 x="480" y="220"/>
+      <p2 x="480" y="300"/>
+    </wire>
+    <wire>
+      <p1 x="880" y="320"/>
+      <p2 x="880" y="360"/>
+    </wire>
+    <wire>
+      <p1 x="580" y="280"/>
+      <p2 x="580" y="400"/>
+    </wire>
+    <wire>
+      <p1 x="820" y="180"/>
+      <p2 x="820" y="260"/>
+    </wire>
+    <wire>
+      <p1 x="900" y="300"/>
+      <p2 x="900" y="320"/>
+    </wire>
+    <wire>
+      <p1 x="520" y="260"/>
+      <p2 x="520" y="360"/>
+    </wire>
+    <wire>
+      <p1 x="860" y="180"/>
+      <p2 x="860" y="340"/>
+    </wire>
+  </wires>
+  <measurementOrdering/>
+</circuit>

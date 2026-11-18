@@ -1,0 +1,390 @@
+<?xml version="1.0" encoding="utf-8"?>
+<circuit>
+  <version>2</version>
+  <attributes>
+    <entry>
+      <string>romContent</string>
+      <romList>
+        <roms/>
+      </romList>
+    </entry>
+    <entry>
+      <string>skipHDL</string>
+      <boolean>true</boolean>
+    </entry>
+  </attributes>
+  <visualElements>
+    <visualElement>
+      <elementName>alu.dig</elementName>
+      <elementAttributes/>
+      <pos x="740" y="280"/>
+    </visualElement>
+    <visualElement>
+      <elementName>In</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>SrcA</string>
+        </entry>
+        <entry>
+          <string>Bits</string>
+          <int>32</int>
+        </entry>
+      </elementAttributes>
+      <pos x="580" y="300"/>
+    </visualElement>
+    <visualElement>
+      <elementName>In</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>SrcB</string>
+        </entry>
+        <entry>
+          <string>Bits</string>
+          <int>32</int>
+        </entry>
+      </elementAttributes>
+      <pos x="580" y="420"/>
+    </visualElement>
+    <visualElement>
+      <elementName>In</elementName>
+      <elementAttributes>
+        <entry>
+          <string>rotation</string>
+          <rotation rotation="3"/>
+        </entry>
+        <entry>
+          <string>Label</string>
+          <string>ALUControl</string>
+        </entry>
+        <entry>
+          <string>Bits</string>
+          <int>4</int>
+        </entry>
+      </elementAttributes>
+      <pos x="800" y="200"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Out</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>Zero</string>
+        </entry>
+      </elementAttributes>
+      <pos x="960" y="320"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Out</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>ALUResult</string>
+        </entry>
+        <entry>
+          <string>Bits</string>
+          <int>32</int>
+        </entry>
+      </elementAttributes>
+      <pos x="960" y="360"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Testcase</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>ADD</string>
+        </entry>
+        <entry>
+          <string>Testdata</string>
+          <testData>
+            <dataString>SrcA SrcB ALUControl ALUResult Zero
+
+
+0 0 0 0 1
+
+# --- SEKCJA 2: AUTOMATYCZNY TEST W PĘTLI ---
+loop(i, 10000)  
+        
+	let A = random(0xffffffff);
+	let B = random(0xffffffff);
+	let res = (A + B) &amp; 0xffffffff;
+
+	(A) (B) 0 (res) (res = 0)
+  
+end loop</dataString>
+          </testData>
+        </entry>
+      </elementAttributes>
+      <pos x="1200" y="-140"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Testcase</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>SUB</string>
+        </entry>
+        <entry>
+          <string>Testdata</string>
+          <testData>
+            <dataString>SrcA SrcB ALUControl ALUResult Zero
+
+0 0 0b1000 0 1
+5 10 0b1000 (-5) 0
+
+loop(i, 10000)
+
+	let A = random(0xffffffff);
+	let B = random(0xffffffff);
+	let res = (A - B) &amp; 0xffffffff;
+
+	(A) (B) 0b1000 (res) (res = 0)
+
+end loop</dataString>
+          </testData>
+        </entry>
+      </elementAttributes>
+      <pos x="1200" y="-40"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Testcase</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>SLL</string>
+        </entry>
+        <entry>
+          <string>Testdata</string>
+          <testData>
+            <dataString>SrcA SrcB ALUControl ALUResult Zero
+
+1 1 1 2 0
+
+loop(i, 10000)
+
+	let A = random(0xffffffff);
+	let B = random(32);
+	let res = (A &lt;&lt; B) &amp; 0xffffffff;
+
+	(A) (B) 0b0001 (res) (res = 0)
+
+end loop</dataString>
+          </testData>
+        </entry>
+      </elementAttributes>
+      <pos x="1200" y="60"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Testcase</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>SLT</string>
+        </entry>
+        <entry>
+          <string>Testdata</string>
+          <testData>
+            <dataString>SrcA SrcB ALUControl ALUResult Zero
+
+3 4 0b0010 1 0
+
+loop(i, 10000)
+
+	let A = signExt(32,random(0xffffffff));
+	let B = signExt(32,random(0xffffffff));
+
+	(A) (B) 0b0010 (ite(A&lt;B,1,0)) (ite(A&lt;B,0,1))
+
+end loop</dataString>
+          </testData>
+        </entry>
+      </elementAttributes>
+      <pos x="1200" y="160"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Testcase</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>SLTU</string>
+        </entry>
+        <entry>
+          <string>Testdata</string>
+          <testData>
+            <dataString>SrcA SrcB ALUControl ALUResult Zero
+
+3 4 0b0011 1 0
+
+loop(i, 10000)
+
+	let A = random(0xffffffff);
+	let B = random(0xffffffff);
+
+	(A) (B) 0b0011 (ite(A&lt;B,1,0)) (ite(A&lt;B,0,1))
+
+end loop</dataString>
+          </testData>
+        </entry>
+      </elementAttributes>
+      <pos x="1200" y="260"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Testcase</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>XOR</string>
+        </entry>
+        <entry>
+          <string>Testdata</string>
+          <testData>
+            <dataString>SrcA SrcB ALUControl ALUResult Zero
+
+loop(i, 10000)
+
+	let A = random(0xffffffff);
+	let B = random(0xffffffff);
+	let res = (A ^ B) &amp; 0xffffffff;
+
+	(A) (B) 0b0100 (res) (res = 0)
+
+end loop</dataString>
+          </testData>
+        </entry>
+      </elementAttributes>
+      <pos x="1200" y="360"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Testcase</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>SRL</string>
+        </entry>
+        <entry>
+          <string>Testdata</string>
+          <testData>
+            <dataString>SrcA SrcB ALUControl ALUResult Zero
+
+loop(i, 10000)
+
+	let A = random(0xffffffff);
+	let B = random(32);
+	let res = (A &gt;&gt; B) &amp; 0xffffffff;
+
+	(A) (B) 0b0101 (res) (res = 0)
+
+end loop</dataString>
+          </testData>
+        </entry>
+      </elementAttributes>
+      <pos x="1200" y="460"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Testcase</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>SRA</string>
+        </entry>
+        <entry>
+          <string>Testdata</string>
+          <testData>
+            <dataString>SrcA SrcB ALUControl ALUResult Zero
+
+loop(i, 10000)
+    let A = random(0xffffffff);
+    let B = random(32);
+    
+    let logical_shift = A &gt;&gt; B;
+    let is_negative = (A &amp; 0x80000000) != 0;
+    let mask = ite((B = 0), 0, (0xffffffff &lt;&lt; (32 - B)));
+    let expected_res = (ite(is_negative, (logical_shift | mask), logical_shift)) &amp; 0xffffffff;
+    let expected_zero = (expected_res = 0);
+
+    (A) (B) 0b1101 (expected_res) (expected_zero)
+end loop</dataString>
+          </testData>
+        </entry>
+      </elementAttributes>
+      <pos x="1200" y="560"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Testcase</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>OR</string>
+        </entry>
+        <entry>
+          <string>Testdata</string>
+          <testData>
+            <dataString>SrcA SrcB ALUControl ALUResult Zero
+
+loop(i, 10000)
+
+	let A = random(0xffffffff);
+	let B = random(0xffffffff);
+	let res = (A | B) &amp; 0xffffffff;
+
+	(A) (B) 0b0110 (res) (res = 0)
+
+end loop</dataString>
+          </testData>
+        </entry>
+      </elementAttributes>
+      <pos x="1200" y="660"/>
+    </visualElement>
+    <visualElement>
+      <elementName>Testcase</elementName>
+      <elementAttributes>
+        <entry>
+          <string>Label</string>
+          <string>AND</string>
+        </entry>
+        <entry>
+          <string>Testdata</string>
+          <testData>
+            <dataString>SrcA SrcB ALUControl ALUResult Zero
+
+loop(i, 10000)
+
+	let A = random(0xffffffff);
+	let B = random(0xffffffff);
+	let res = (A &amp; B) &amp; 0xffffffff;
+
+	(A) (B) 0b0111 (res) (res = 0)
+
+end loop</dataString>
+          </testData>
+        </entry>
+      </elementAttributes>
+      <pos x="1200" y="760"/>
+    </visualElement>
+  </visualElements>
+  <wires>
+    <wire>
+      <p1 x="860" y="320"/>
+      <p2 x="960" y="320"/>
+    </wire>
+    <wire>
+      <p1 x="580" y="420"/>
+      <p2 x="740" y="420"/>
+    </wire>
+    <wire>
+      <p1 x="860" y="360"/>
+      <p2 x="960" y="360"/>
+    </wire>
+    <wire>
+      <p1 x="580" y="300"/>
+      <p2 x="740" y="300"/>
+    </wire>
+    <wire>
+      <p1 x="800" y="200"/>
+      <p2 x="800" y="280"/>
+    </wire>
+  </wires>
+  <measurementOrdering/>
+</circuit>
