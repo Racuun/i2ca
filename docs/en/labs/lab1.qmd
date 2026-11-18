@@ -1,0 +1,301 @@
+---
+title: "From Gate to ALU"
+author: "Łukasz Kmiecik"
+---
+
+## Introduction
+
+The main goal of this laboratory is to familiarize yourself with number representation in the binary system and Two's Complement (U2) encoding, execution of arithmetic and logical operations in digital systems, and the typical architecture of an Arithmetic Logic Unit (ALU). You will understand the principles of binary operations, explore the theory of computational and Turing completeness, and learn how to navigate the `Digital` simulator and laboratory environment.
+
+### Knowledge Recap
+
+Here is a quick recap of concepts useful in this course:
+
+1. **Basic Logic Gates**
+    - **AND** ($A \cdot B$) - logical multiplication
+    - **OR** ($A + B$) - logic sum
+    - **NOT** ($\neg A$) - logical inversion / negation
+    - **XOR** ($A \oplus B$) - exclusive OR (only one input can be true)
+    - **NOR** ($\overline{A+B}$) - inverted OR
+    - **NAND** ($\overline{A \cdot B}$) - inverted AND
+2. **Multiplexers** (MUX) <br/>
+    Combinatorial circuit with $n$ selector inputs, $2^n$ data inputs and one data output. It is used to select one of the input channels from which data will be passed to the output pin.
+
+## Digital
+
+This laboratory was designed with Helmut Neemann's **Digital** software in mind. It is an open-source circuit simulator inspired by Logisim, allowing graphical design, simulation, verification, and Verilog export of digital circuits, which will help us with future FPGA implementation.
+
+To launch the software, we can use the system UI or the command:
+```bash
+java -jar Digital.jar
+```
+with the correct `.jar` file location. If you do not have the software installed, follow the Lab 0 instructions on setting up the laboratory environment.
+
+Digital uses files with the `.dig` extension. After startup, an empty schematic window will appear (or your previous design if one was open).
+
+### Quick Reference
+
+* **Component Tree View:** In the *View* menu, enable *Component Tree View* to display the list of available components on the left side of the window. Every component is also accessible via the *Components* menu.
+* **Custom Subcircuits:** Digital allows using your own pre-designed circuits through the *Components* $\to$ *Custom* category.
+* **Updating Components:** If a newly created component does not appear in the *Custom* list, use *Components* $\to$ *Custom* $\to$ *Update*.
+* **Custom Component Appearance:** Digital allows editing the visual shape of a subcircuit block via *Edit* $\to$ *Circuit specific settings* $\to$ *Advanced* $\to$ *Shape* $\to$ *User defined*. Using *Template* generates an SVG file that can be edited in Inkscape and reloaded using *Import*.
+* **Help & Documentation:** All functions are documented under *Help* $\to$ *Documentation*. Contextual help is also available for every component.
+* **Bus Widths:** Right-click any component, wire, or pin to change its **Data Bits** parameter (e.g., from 1 to 32 bits).
+
+## Binary number representation
+
+In modern computing, the primary way of representing numbers is the binary system. Its crucial advantage over $n$-based systems is the use of only two states per digit, which drastically simplifies encoding information in electrical voltage levels. 
+
+Although the utilization of three or more voltage levels can significantly increase data density, it requires precise voltage control and decoding circuitry like Analog-to-Digital Converters, which adds substantial design complexity, increases power consumption, and hurts overall performance.
+
+::: {.callout-note collapse="true"}
+## Learn More
+
+Multi-level encoding is widely used in data transmission and storage where bandwidth or silicon density is the primary bottleneck:
+
+- [Wikipedia MLC](https://en.wikipedia.org/w/index.php?title=Multi-level_cell&oldid=1363712650) [@enwiki:MultiLevelCells]
+- [Kioxia MLC whitepaper](https://www.kioxia.com/en-jp/rd/technology/multi-level-cell.html) [@kioxia:MultiLevelCells]
+- [PAM-4 on Wikipedia](https://en.wikipedia.org/w/index.php?title=Pulse-amplitude_modulation&oldid=1360397261) [@enwiki:PAM-4]
+
+**Why CPUs remain binary?**<br/>
+Inside a processor core, signals must switch billions of times per second with picosecond latency. Binary CMOS logic remains the fastest and most noise-immune technology available.
+:::
+
+### Binary Arithmetics
+
+One of the most widely used operations is addition. Counters, memory addressing, arithmetic, and flow control are just a few areas that use it. Binary addition works the same way as in the decimal system, but the maximum value of a single digit can only be 1.
+
+### Half-adder
+
+An easy way of adding two bits together is to use a half-adder. It uses only two gates to calculate the sum of two bits. We can describe it using a truth table where `Sum` and `Carry out` are outputs:
+
+| A | B | Sum | Carry out |
+|:-:|:-:|:---:|:---:|
+| 0 | 0 | 0 | 0 |
+| 0 | 1 | 1 | 0 |
+| 1 | 0 | 1 | 0 |
+| 1 | 1 | 0 | 1 |
+
+`Carry out` represents a value carried to the next digit — just like carrying in column addition (pencil-and-paper addition).
+
+::: {.callout-note icon=false}
+## Exercise 1.1: Design a Half-Adder
+
+1. Open Digital and create a new file via *File* $\to$ *New*.
+2. Select components `Input` and `Output` (*Components* $\to$ *IO*) to create input and output signals. You can change their parameters, such as name or bit width, using the right mouse button.
+3. Find logic gates in the *Components* $\to$ *Gates* menu and connect them to create the circuit.
+4. Run simulation using *Simulation* $\to$ *Start of simulation* (or the green arrow button). Click on the input pins to control input signals.
+5. Check if the design behaves as expected according to the truth table.
+6. Save the working design (*File* $\to$ *Save as* or `Ctrl + S`) as `half_adder.dig` in the `Hardware` directory of your project.
+:::
+
+::: {.callout-tip}
+The design requires only two gates. Compare the truth table with the truth tables of standard two-input logic gates.
+
+Take some time to explore the software and interactive simulations — it is a great opportunity to get familiar with Digital.
+:::
+
+### Full-adder
+
+Why use `Carry out` if there is no input to receive it? In column addition, we use the carry from the previous column as a third operand alongside the two initial digits. 
+
+That is where the full-adder comes in. It provides three inputs: `A`, `B`, and `Carry in` ($C_{in}$), while producing the same two outputs as the half-adder (`Sum` and `Carry out`). Such a structure allows connecting multiple modules in a chain to perform $N$-bit addition.
+
+| A | B | Carry in | Sum | Carry out |
+|:-:|:-:|:---:|:---:|:---:|
+| 0 | 0 | 0 | 0 | 0 |
+| 0 | 0 | 1 | 1 | 0 |
+| 0 | 1 | 0 | 1 | 0 |
+| 0 | 1 | 1 | 0 | 1 |
+| 1 | 0 | 0 | 1 | 0 |
+| 1 | 0 | 1 | 0 | 1 |
+| 1 | 1 | 0 | 0 | 1 |
+| 1 | 1 | 1 | 1 | 1 |
+
+As the name suggests, you can use two half-adders and one OR gate to create a full-adder.
+
+::: {.callout-note icon=false}
+## Exercise 1.2: Design a Full-Adder
+
+1. Create a new design file in Digital.
+2. Save the newly created file in the same directory as `half_adder.dig`.
+3. Use `half_adder.dig` as a subcircuit component (*Components* $\to$ *Custom*) in your design.
+4. Add an **OR** gate to combine the carries from both half-adders.
+5. Verify the circuit through simulation across all 8 input combinations, and save as `full_adder.dig`.
+:::
+
+## U2 and negative numbers
+
+In binary architectures, handling negative numbers creates an implementation challenge. The naive approach of using a dedicated sign flag (Sign-Magnitude) requires complex conditional circuitry to handle operations with negative numbers and introduces two separate representations of zero (`+0` and `-0`).
+
+The universal solution used across computer engineering is **Two's Complement (U2)**. The core idea behind U2 is to assign a negative value to the most significant bit (MSB), while preserving standard positive powers of two for every other bit:
+
+$$ X = -x_{n-1} \cdot 2^{n-1} + \sum_{i=0}^{n-2} x_i \cdot 2^i $$
+
+This allows arithmetic on signed numbers to follow the exact same hardware principles as unsigned numbers.
+
+::: {.callout-note collapse="true"}
+## Learn More: Why Two's Complement Won
+
+Early computer architectures explored several signed representations, including Sign-Magnitude and One's Complement. Two's Complement (U2) became the universal industry standard because:
+
+1. **Identical Hardware:** Addition and subtraction are unified into a single operation. $A - B$ is mathematically identical to $A + \bar{B} + 1$, allowing adders to subtract without dedicated subtractor circuitry.
+2. **Single Representation of Zero:** Unlike One's Complement (which has $+0$ and $-0$), U2 provides a unique zero representation ($0000_2$), simplifying comparison and zero-flag logic.
+3. **Natural Overflow Behavior:** Arithmetic operations naturally wrap around modulo $2^n$, aligning with hardware bus widths.
+:::
+
+### U2 Inversion
+
+To convert a binary number to its negative Two's Complement representation, simply invert all bits and add one:
+
+$$ X_{U2} = \bar{X_B} + 1 $$
+
+An XOR gate can act as a programmable inverter ($B \oplus 0 = B$, $B \oplus 1 = \bar{B}$). However in `Digital` it is easier to use multiplexer and inverter.
+
+### Sign Extending
+
+Since the MSB carries negative weight, it also acts as a sign indicator ($0$ - positive, $1$ - negative). When there is a need to increase the bit width of a number (e.g., from 12 bits to 32 bits, or 32 to 64), a **sign extension** is performed by copying the MSB to every newly added high bit to preserve the original numeric value.
+
+Example: 4-bit `-3` (`1101`) extended to 8 bits becomes `11111101`.
+
+### Subtraction
+
+Because U2 is fully compatible with standard binary addition, subtraction can be performed by adding the Two's Complement negation of the subtrahend:
+
+$$A - B = A + (-B) = A + \bar{B} + 1$$
+
+To create a dual-purpose adder/subtractor (as illustrated in @fig-adder-subtractor), we can tie a `Sub` control signal to `Carry in` ($+1$) and use it to conditionally invert the second input $B$:
+
+```{mermaid}
+%%| label: fig-adder-subtractor
+%%| fig-cap: "Dual-purpose 32-bit Adder / Subtractor Circuit"
+flowchart LR
+    A["A[31:0]"] --> ADD["32-bit adder"]
+    B["B[31:0]"] --> MUX["MUX"]
+    Sub["Sub (0: ADD, 1: SUB)"] --> |Inversion control| MUX 
+    Sub --> |"Carry-in (+1)"| ADD
+    MUX --> ADD
+    ADD --> Res["Result[31:0]"]
+
+    style ADD fill:#e0f2fe,stroke:#0284c7,stroke-width:1.5px
+    style MUX fill:#fef3c7,stroke:#d97706,stroke-width:1.5px
+    style Res fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px
+    style Sub fill:#f3e8ff,stroke:#9333ea,stroke-width:1.5px
+```
+
+### Bit Shifting
+
+While addition and subtraction operate on numeric values, bit shifting operations manipulate the position of bits within a register. Shifting left by $k$ bits multiplies an unsigned integer by $2^k$, while shifting right divides by $2^k$.
+
+In RISC-V (RV32I), shifts use the lower 5 bits of operand B as the shift amount ($\text{shamt} = B[4:0]$, since $2^5 = 32$ bits):
+
+1. **Logic Shift Left (`sll`):** Shifts bits left, inserting zeros at the least significant bit (multiplication by $2^{\text{shamt}}$).
+2. **Logic Shift Right (`srl`):** Shifts bits right, inserting zeros at the most significant bit (unsigned division).
+3. **Arithmetic Shift Right (`sra`):** Shifts bits right, but **replicates the sign bit ($A_{31}$)** into newly vacated high bits. This preserves the sign for negative numbers in U2!
+
+```
+Original (signed -4):    1111 1111 1111 1111 1111 1111 1111 1100
+SRL by 1 (turns +):      0111 1111 1111 1111 1111 1111 1111 1110  (+2,147,483,646)
+SRA by 1 (preserves -):  1111 1111 1111 1111 1111 1111 1111 1110  (-2)
+```
+
+In Digital, you can implement shifts using the built-in **Barrel Shifter** component.
+
+## Arithmetic-Logic Unit
+
+The Arithmetic-Logic Unit (ALU) is the core execution module in a processor. It executes arithmetic and logic instructions: addition, subtraction, AND, OR, shifts, and comparisons. 
+
+In general CPU design, the ALU is typically constrained to integer values. Floating-point operations are handled by an FPU (Floating-Point Unit), and memory address calculations, in more complex out-of-order architectures, may be handled by dedicated Load-Store Units (LSUs).
+
+The basic ALU architecture is **purely combinational**, containing adders, shifters, comparators, and logic gates with their outputs selected by a multiplexer, as shown in @fig-alu-architecture:
+
+```{mermaid}
+%%| label: fig-alu-architecture
+%%| fig-cap: "Combinational 32-bit RV32I ALU Architecture"
+flowchart TD
+    subgraph Inputs
+        SrcA["SrcA[31:0]"]
+        SrcB["SrcB[31:0]"]
+        Ctrl["ALUControl[3:0]"]
+    end
+
+    SrcA --> AddSub["Adder / Subtractor"]
+    SrcB --> AddSub
+    Ctrl -->|bit 3: Sub| AddSub
+
+    SrcA --> Shifter["Barrel Shifter (SLL / SRL / SRA)"]
+    SrcB -->|"shamt: SrcB[4:0]"| Shifter
+
+    SrcA --> Comp["Comparator (SLT / SLTU)"]
+    SrcB --> Comp
+
+    SrcA --> Logic["Bitwise Logic (AND, OR, XOR)"]
+    SrcB --> Logic
+
+    AddSub --> MUX["Multiplexer (8:1, 32-bit)"]
+    Shifter --> MUX
+    Comp --> MUX
+    Logic --> MUX
+
+    Ctrl -->|Select| MUX
+    Ctrl -->|Select| Shifter
+    MUX --> Res["ALUResult[31:0]"]
+    Res --> ZeroDetector["ALUResult == 0"] --> Zero["Zero (1-bit flag)"]
+
+    style MUX fill:#fff3cd,stroke:#ffc107,stroke-width:2px
+    style Zero fill:#d1ecf1,stroke:#17a2b8,stroke-width:2px
+```
+
+### Implementation
+
+The table below lists all the necessary ALU operations we will use in our RV32I processor, together with their control codes:
+
+| `ALUControl[3:0]` | Operation | Expression | RISC-V |
+|:---:|:---|:---|:---|
+| `0000` | Addition | $\text{SrcA} + \text{SrcB}$ | `add`, `addi` |
+| `1000` | Subtraction | $\text{SrcA} - \text{SrcB}$ | `sub` |
+| `0001` | Logic Shift Left | $\text{SrcA} \ll \text{SrcB}[4:0]$ | `sll`, `slli` |
+| `0010` | Set Less Than | $(\text{SrcA}_{\text{signed}} < \text{SrcB}_{\text{signed}}) \,?\, 1 : 0$ | `slt`, `slti` |
+| `0011` | Set Less Than Unsigned | $(\text{SrcA}_{\text{unsigned}} < \text{SrcB}_{\text{unsigned}}) \,?\, 1 : 0$ | `sltu`, `sltiu` |
+| `0100` | Exclusive OR | $\text{SrcA} \oplus \text{SrcB}$ | `xor`, `xori` |
+| `0101` | Logic Shift Right | $\text{SrcA} \gg \text{SrcB}[4:0]$ | `srl`, `srli` |
+| `1101` | Arithmetic Shift Right | $\text{SrcA} \gg_{\text{arith}} \text{SrcB}[4:0]$ | `sra`, `srai` |
+| `0110` | OR | $\text{SrcA} \mid \text{SrcB}$ | `or`, `ori` |
+| `0111` | AND | $\text{SrcA} \ \& \ \text{SrcB}$ | `and`, `andi` |
+
+### Zero flag
+
+The ALU outputs a single 1-bit status flag: **`Zero`**.
+$$\text{Zero} = (\text{ALUResult} == 0)$$
+
+In Digital, this can be implemented by connecting the 32-bit `ALUResult` bus to a comparator checking for equality with `0` (or a multi-input NOR gate). This flag will be essential in later labs for implementing conditional branch instructions.
+
+::: {.callout-note icon=false}
+## Exercise 1.3: Implement 32-bit ALU
+
+In the table above, all the necessary ALU operations are listed together with their control codes. You can use your own adder or the built-in one provided in Digital.
+
+After finishing the design, test it using the testbench provided in the repository:
+
+1. Open `testbenches/alu_testbench.dig`.
+2. Copy its contents and paste them into your design. Alternatively, insert your design inside the testbench and connect the IO pins.
+3. Run the simulation and verify that all test cases pass.
+:::
+
+::: {.callout-warning}
+Do not change the names of IO pins (`SrcA`, `SrcB`, `ALUControl`, `ALUResult`, `Zero`) or operation codes, as this will break the testbench.
+:::
+
+## Look Ahead: Turing completeness
+
+The operations implemented in the ALU determine its computational capability. In digital systems, having addition, subtraction, bitwise logic, and comparisons is sufficient to compute any mathematical function.
+
+However, the ALU designed in this laboratory is **purely combinational** — its output depends solely on the current inputs, without any internal state or memory. While it can perform all essential mathematical transformations, an ALU on its own cannot execute an algorithm, iterate, or make autonomous decisions.
+
+To achieve **Turing completeness**, a system requires:
+
+1. An operational unit to perform primitive computations (your **ALU**).
+2. Memory to store state across time (the **Register File** and **RAM**).
+3. A control unit capable of conditional branching and looping (the **Program Counter** and **Decoder**).
+
+In the next laboratory, we will attach registers and automate instruction execution, turning your computational block into a real processor!

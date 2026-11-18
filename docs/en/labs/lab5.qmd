@@ -1,0 +1,276 @@
+---
+title: "Going Physical"
+author: "Łukasz Kmiecik"
+---
+
+## Introduction
+
+Every hardware design is made with some sort of physical implementation at one point. Sole simulations are great for functional testing, but fall short with large integrations, running software, or continuous execution. 
+
+Up to now, our focus was mainly on functional correctness of the processor, not physical constraints. Moving forward, we will explore how our CPU interacts with real hardware constraints, peripherals, and the programming ecosystem, where a simple simulator will no longer suffice.
+
+## Soft and Hard Cores
+
+Digital hardware implementations can be grouped into two types:
+
+1. **Soft-core:** Flexible and modular, implemented mostly on FPGAs.
+2. **Hard-core:** Application-specific, predefined, and stationary; ASICs and standalone chips.
+
+Both are widely used, although each for different applications. **Field Programmable Gate Arrays** (FPGAs) are reconfigurable, allowing reuse of one platform for multiple independent projects and designs. Their main limitations are resource caps, a limited set of specialized hardware primitives, and wire routing delays. Mostly used for prototyping, signal processing, or custom circuitry, they are a great choice for testing small-to-medium designs.
+
+On the other hand, **Application Specific Integrated Circuits** (ASICs) are fixed after fabrication. Produced on silicon through precise nanoscale lithography, they offer higher clock speeds and compact integration on a PCB with other circuitry. However, they require additional design steps, analog signal verification, specialized EDA software, and take months to be produced in a factory. They are best suited for completed circuits ready for mass production and commercial sales.
+
+In this course, our RV32I processor is a **soft-core** running on a Xilinx Artix-7 FPGA chip.
+
+## Physical Constraints
+
+Implementing a design on an FPGA, although highly automated, still requires engineers to consider physical constraints. Not every approach that works in simulation will synthesize correctly into real hardware.
+
+### Sequential Logic
+
+When one module uses a clock of different frequency or phase and data is passed across the boundary, it is called **Clock Domain Crossing** (CDC). When domains change, data must be passed through buffer registers, FIFOs, or handshaking protocols to avoid data loss or **metastability**.
+
+In our processor datapath, all core elements share a single global clock domain, keeping clock distribution straightforward.
+
+::: {.callout-note collapse="true"}
+## Learn More: Metastability and Synchronizers
+When an asynchronous signal toggles within the setup or hold time window of a flip-flop, the internal bistable element may balance precariously between logic 0 and logic 1. This condition is called **metastability**. The output voltage hovers at an undefined intermediate level before settling probabilistically into a stable 0 or 1.
+
+To protect synchronous logic from metastable glitches, asynchronous external inputs (such as mechanical buttons or serial RX lines) are passed through a **two-flop synchronizer**. Two cascaded flip-flops give the signal a full clock period to settle into a valid digital state.
+:::
+
+### Timing
+
+Each logic gate, flip-flop, and register has physical **propagation delays**. When chained together, those delays accumulate. In complex designs, signals can take many different paths. The path with the longest total delay between two clocked registers is called the **critical path**, and it limits the minimal clock cycle time.
+
+Signals must also remain stable during precise time windows around the clock edge: setup time ($t_{setup}$) before the edge, and hold time ($t_{hold}$) after the edge.
+
+It is common for a design to have specified frequency constraints up front and many designers work with that in mind. When timing does not meet specifications, the circuit is modified by pipelining or logic optimization, and this process is referred to as **timing closure**. In our processor, we will use a 1 MHz clock, leaving a massive timing surplus (a 1000 ns clock period) that ensures our single-cycle datapath operates comfortably.
+
+### Area, Power, Performance
+
+Implementations are commonly described in terms of three parameters: power, performance, and area. Despite being measurable, they are used as non-numerical definitions of optimization focus and trade-offs. Better performance comes at the expense of power and area. Minimizing footprint size hurts circuit performance. Where the optimization focus is not specified or needed, the commonly used approach is to **balance PPA**.
+
+## Datapath Changes
+
+The current design of the processor can be classified as a single-cycle core with asynchronous memory. That architecture comes with two major limitations on physical hardware:
+
+1. True asynchronous RAM does not exist as dedicated storage on modern FPGAs. It synthesizes into **distributed RAM** using combinations of flip-flops and LUTs, consuming huge amounts of them and leaving no space for the rest of our logic.
+2. Changes must not create multi-cycle execution paths while we still need a way to program the physical device dynamically without re-running FPGA synthesis every time.
+
+To resolve these issues, we update our clocking, reset, and memory subsystems.
+
+### Reset and Clock
+
+Digital handles reset as an internal pre-simulation engine hook, making it an implicit condition rather than an interactive hardware signal. Therefore, a reset input must be created as an independent I/O pin.
+
+There are two approaches for handling reset depending on which state is considered active. In our design, we implement an **active-low reset** (`rst_n`), meaning that reset occurs when the input state is low (`0`). To resume normal execution, the input must be pulled high (`1`). This allows for easy integration with physical buttons.
+
+::: {.callout-warning}
+Do not use the `Reset` component from Digital's `Miscellaneous` library. It is an internal simulation hook that does not create a real input pin in exported Verilog. Use a standard 1-bit **Input Pin** named `rst_n`.
+:::
+
+As mentioned before, the clock frequency is set to 1 MHz. You can use the standard `Clock Input` component. Because the clock is wired to multiple modules across the schematic, it is useful to use `Tunnel` components to keep wiring clean.
+
+### Sequential Memory and Unification
+
+FPGAs have dedicated elements for memory, called **Block RAM** (BRAM). Block RAM is a synchronous memory device distributed across the FPGA fabric as dedicated silicon blocks. Migrating to these dedicated components minimizes logic utilization.
+
+#### The Inverted Clock Trick (`clk_n`)
+
+Unlike simulation memory, physical BRAM requires a clock edge to latch an address and output data. If memory were clocked on the same rising edge as the CPU registers, read data would appear one cycle late, breaking our single-cycle execution.
+
+To solve this without adding complex pipeline stages, memory is clocked on the **falling edge of the clock** (`clk_n`), as illustrated in @fig-clk-n-timing:
+
+```{mermaid}
+%%| label: fig-clk-n-timing
+%%| fig-cap: "Falling-Edge Clocking for Single-Cycle BRAM Access"
+sequenceDiagram
+    autonumber
+    participant CLK as CPU Clock (clk)
+    participant PC as Program Counter
+    participant BRAM as CMEM (clk_n)
+    participant Core as Execution Logic
+    participant Reg as Register File
+
+    Note over CLK: Rising Edge (t = 0)
+    CLK->>PC: PC updates to new address
+    Note over BRAM: First half-cycle (0 to 500 ns): Address settles
+    Note over CLK: Falling Edge (t = 500 ns)
+    CLK->>BRAM: BRAM latches address, outputs instruction
+    Note over Core: Second half-cycle (500 to 1000 ns): Decode, ALU, LSU
+    Note over CLK: Next Rising Edge (t = 1000 ns)
+    CLK->>Reg: Latch results into Register File
+```
+
+With our 1 MHz clock (a 1000 ns period), the 500 ns half-cycle provides huge timing headroom for signals to settle before each edge.
+
+#### Memory Unification
+
+The laboratory library provides a dedicated module, **`CMEM.dig`** (Combined Memory), containing dual-port Block RAM for both ROM and RAM.
+
+It was mentioned in previous labs that user software perceives memory as one unified address space. Our earlier simulation approach created a heavy distinction between instructions and data, with independent address buses starting at address zero for each. Unification maps the Program Counter and data memory addresses into non-overlapping regions of a single address map:
+
+| Address Range | Memory Region | Hardware Block | Description |
+|:---|:---|:---|:---|
+| `0x0000_0000 – 0x0000_3FFF` | Code (acting as ROM) | Block RAM (16 KB) | Program instructions, written by programmer |
+| `0x0000_8000 – 0x0000_BFFF` | Data (acting as RAM) | Block RAM (16 KB) | Variables and stack growing down from `0x0000_BFFC` |
+
+Inside `CMEM.dig`, dual access ports handle concurrent operations:
+
+- **Port A (`iADDR` $\rightarrow$ `iDATA`):** Dedicated to the Program Counter for instruction fetch.
+- **Port B (`dADDR`, `dDATA`, `byteWE`, `CS` $\leftrightarrow$ `doDATA`):** Shared between CPU Load/Store instructions and the hardware programmer.
+
+::: {.callout-important}
+## Updating Assembly Addresses for Mapped RAM
+Because Data RAM now begins at `0x0000_8000`, any test assembly code reading or writing variables must point base registers to the RAM region:
+```asm
+li   x1, 0x8000         # Base address of Data RAM
+sw   x2, 0(x1)          # Store word into RAM
+li   sp, 0xBFFC         # Stack pointer top of RAM (16 KB)
+```
+:::
+
+### Programmer
+
+Rather than re-synthesizing the FPGA bitstream whenever you edit code, our hardware includes an on-chip UART memory programmer (`programmer.dig` / `uart_programmer.v`), as shown in @fig-programmer-integration.
+
+```{mermaid}
+%%| label: fig-programmer-integration
+%%| fig-cap: "UART Programmer Interfacing with CPU and CMEM"
+flowchart LR
+    Host["Host Computer<br/>(flash_rv32.py)"] -->|USB-UART Serial| UART["UART Bridge (Nexys)"]
+    UART -->|RX_UART| Prog["programmer.dig"]
+    Prog -->|TX_UART| UART
+    Prog -->|ADDR, DATA, VALID| CMEM["CMEM Port B (pADDR, pDATA, pWE)"]
+    Prog -->|RST_RQ_N| Core["CPU Reset (held low during flash)"]
+```
+
+1. When you initiate a flash over UART, the programmer asserts `RST_RQ_N = 0`, holding the CPU core in reset.
+2. The programmer takes over the `pADDR`, `pDATA`, and `pWE` inputs of `CMEM`.
+3. It receives machine code bytes from the host flashing script, packs them into 32-bit words, and writes them into `CMEM` starting at address `0x00000000`.
+4. Once transmission completes, `RST_RQ_N` returns to 1, releasing CPU reset and executing your freshly loaded software.
+
+::: {.callout-note icon=false}
+## Exercise 5.1: Datapath Refactoring
+
+1. Open your completed CPU datapath schematic in Digital.
+2. Remove the standalone Instruction ROM and Data RAM blocks from Lab 4.
+3. Insert `CMEM.dig` from `lib/CMEM.dig`:
+   - `iADDR` $\leftarrow$ Program Counter output.
+   - `iDATA` $\rightarrow$ Instruction Decoder.
+   - `dADDR` $\leftarrow$ ALU Result.
+   - `dDATA` $\leftarrow$ `mem_data_tx` output.
+   - `byteWE` $\leftarrow$ Load/Store Unit byte-write enables.
+   - `CS` $\leftarrow$ Address decoder select (`ALUResult < 0x80000000`).
+   - `clk_n` $\leftarrow$ Inverted system clock.
+4. Insert `programmer.dig` from `lib/peripherial/programmer.dig`:
+   - Connect `ADDR`, `DATA`, `VALID` directly to `pADDR`, `pDATA`, `pWE` on `CMEM`.
+   - Wire `CLK`, `RST_N`, `RX_UART`, `TX_UART` to top-level pins.
+   - Combine `RST_RQ_N` with the external `rst_n` pin using an AND gate to drive core reset.
+5. Verify your updated schematic in Digital using your existing assembly tests (remembering to update data addresses to `0x8000`).
+:::
+
+## Nexys 4 Implementation
+
+With your datapath verified in Digital, you are ready to export the design and target the physical FPGA.
+
+### Wrapper
+
+To ensure that every signal is correctly connected and driven, a top-level Verilog module is needed. Best practice is to use one for each destination board or silicon target.
+
+The wrapper provides two essential support functions:
+
+1. **Clock Divider:** The onboard oscillator runs at 100 MHz. A simple counter divides this clock down to our safe 1 MHz CPU clock, driving an internal clock buffer (`BUFG`).
+2. **Button Debouncing:** Physical mechanical push buttons bounce electrically for several milliseconds upon contact. The wrapper routes the active-low `CPU_RESETN` button directly to the processor's active-low `rst_n` input.
+
+The top-level module interfaces directly with physical pins:
+
+- `clk` (100 MHz crystal oscillator)
+- `rst_n` (active-low reset button)
+- `UART_RX` (serial input from PC)
+- `UART_TX` (serial output to PC)
+
+::: {.callout-note icon=false}
+## Exercise 5.2: Export to Verilog and Project Setup
+
+1. In Digital, open your completed CPU schematic (`hart.dig`).
+2. Select **File $\rightarrow$ Export $\rightarrow$ Export to Verilog** and save the file as `hart.v`.
+3. Open **Xilinx Vivado** and create a new RTL project targeting device `xc7a100tcsg324-1` (Nexys 4 DDR / Nexys A7-100T).
+4. Add your exported `hart.v`, the top-level wrapper (`hardware/top_wrapper.v`), the constraints file (`hardware/nexys4ddr.xdc`), and the Verilog programmer modules from `hardware/digital/lib/peripherial/programmer_uart/`.
+:::
+
+### Constraints
+
+In Xilinx Vivado, physical board connections are defined in a **Design Constraints file** (`.xdc`). The constraints file maps the logical ports of your top-level module to specific physical ball-grid pins on the Artix-7 chip.
+
+A pre-configured constraints file is provided in [`hardware/nexys4ddr.xdc`](file:///home/coder/projects/i2ca/lab-package/hardware/nexys4ddr.xdc) with these core pins mapped.
+
+#### How to Modify nexys4ddr.xdc for Future Laboratories
+
+The file `nexys4ddr.xdc` contains ready-to-use pin definitions for every peripheral on the Digilent Nexys 4 DDR / Nexys A7-100T board. By default, pins not used in Lab 5 are commented out with `#`.
+
+When adding peripherals in later laboratories, follow these rules:
+
+1. **Syntax Anatomy:**
+   Every physical constraint consists of a pin mapping, electrical standard, and logical port:
+   ```tcl
+   set_property -dict { PACKAGE_PIN <PIN> IOSTANDARD LVCMOS33 } \
+       [get_ports { <PORT_NAME> }];
+   ```
+
+   - `PACKAGE_PIN`: The physical BGA package pin on the FPGA chip (e.g. `E3`, `C12`, `H17`).
+   - `IOSTANDARD LVCMOS33`: Sets the digital voltage standard to 3.3V LVCMOS.
+   - `[get_ports { <PORT_NAME> }]`: Must match the top-level Verilog port name in `top_wrapper.v` **character-for-character** (case-sensitive).
+
+2. **Uncommenting Peripheral Groups:**
+   - **Slide Switches (`SW[15:0]`):** Uncomment lines 14–29 (`PACKAGE_PIN J15` through `V10`). In `top_wrapper.v`, declare `input [15:0] SW`.
+   - **User LEDs (`LED[15:0]`):** Uncomment lines 35–49 (`PACKAGE_PIN K15` through `V11`). In `top_wrapper.v`, declare `output [15:0] LED`. Note: `H17` (`led[0]`) is commented to avoid conflict with `rst_n` if needed.
+   - **Push Buttons (`BTNC`, `BTNU`, `BTNL`, `BTNR`, `BTND`):** Uncomment lines 85–89 (`N17`, `M18`, `P17`, `M17`, `P18`). In `top_wrapper.v`, declare the corresponding inputs and include a debouncer circuit.
+   - **Seven-Segment Display (`seg_cat[7:0]`, `seg_sel[7:0]`):** Lines 61–78 contain the cathode segments (`A`..`G` + DP) and digit anodes (`AN0`..`AN7`). **These remain commented out in Lab 5.** Driving the display requires Memory-Mapped I/O (MMIO), which is implemented in Lab 7.
+
+3. **Troubleshooting Netlist Warnings:**
+   - **`CRITICAL WARNING: [Netlist 29-28] Unmatched LOC constraints`**: This warning indicates that a port name inside `[get_ports <name>]` does not exist in `top_wrapper.v`. Always verify spelling and bus vector ranges.
+   - **Unconstrained Ports**: If a port exists in `top_wrapper.v` but is omitted or commented out in `.xdc`, Vivado places it on an arbitrary unrouted pin. Always verify implementation reports.
+
+### Synthesis and Implementation
+
+::: {.callout-note icon=false}
+## Exercise 5.3: Synthesis and Bitstream Generation
+
+1. In Vivado, add `nexys4ddr.xdc` to the Constraints section.
+2. Under the Flow Navigator, click **Run Synthesis**.
+3. Once synthesis succeeds, click **Run Implementation**.
+4. When implementation completes, click **Generate Bitstream**.
+5. Connect your Nexys board to your PC via micro-USB (`PROG / UART` port) and power it on.
+6. Open **Hardware Manager**, click **Auto Connect**, right-click the detected Artix-7 FPGA (`xc7a100t`), and select **Program Device**.
+7. Once programmed, verify that the green `DONE` LED illuminates on the board.
+:::
+
+### Running Software on Silicon
+
+With the bitstream loaded, your custom RISC-V processor is live on silicon!
+
+In this laboratory, our CPU core connects exclusively to Block RAM through `CMEM`. It does not yet include memory-mapped I/O peripherals (such as the 7-segment display or external GPIOs), which are introduced in Lab 7. Verification is performed directly through the USB-UART programming channel:
+
+To upload software without re-synthesizing Vivado, use the provided Python flashing utility (`flash_rv32.py`):
+
+```bash
+python3 lab-package/scripts/flash_rv32.py -p /dev/ttyUSB1 -b 9600 -f lab-package/scripts/tests_rv32i/rv32i_test_cmem.hex
+```
+
+The script performs the hardware handshake over the USB-UART bridge:
+
+1. Asserts serial break to signal the hardware programmer.
+2. Streams instructions into `CMEM` starting at address `0x00000000`.
+3. Verifies transmission integrity and releases CPU reset.
+
+Once flashing finishes, the script prints confirmation, and your processor begins executing instructions directly from Block RAM in real silicon!
+
+## Look Ahead: Hardware - Software Interface
+
+Congratulations! You have crossed the chasm from software simulation to physical silicon. Your single-cycle RV32I processor is now running on real FPGA hardware.
+
+Best of all, **your Vivado bitstream is finished**. Because our hardware programmer dynamically flashes code into Block RAM in less than a second, you will not need to wait through lengthy FPGA synthesis runs again.
+
+In the next laboratory, we transition from writing raw assembly to building a modern bare-metal software stack: configuring the **RISC-V GCC toolchain**, setting up the startup script (`crt0.s`), mastering the **linker script**, and compiling real **C programs** to run on your custom silicon!

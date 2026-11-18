@@ -1,0 +1,479 @@
+---
+title: "Memory Subsystem, Stack & Full RV32I"
+author: "Łukasz Kmiecik"
+---
+
+## Introduction
+
+In previous laboratories, you built a working processor datapath with an ALU, register file, and control flow logic. However, that processor has a fundamental storage limitation: it possesses only 32 registers ($128$ bytes total). It cannot store large arrays, buffers, strings, or maintain a call stack.
+
+In this laboratory, you will remove this bottleneck by integrating **Data Memory (RAM)** with Load and Store instructions, introducing the **Call Stack (`sp`)**, and completing your single-cycle RV32I processor.
+
+
+## Memory Architecture
+
+Registers are extremely fast because they reside directly inside the CPU core as flip-flop arrays. However, building thousands of them from flip-flops would consume excessive silicon area. To store program data, variables, and arrays, computers use a hierarchy of larger, denser storage: **Random Access Memory (RAM)**.
+
+### Harvard vs Von Neumann
+
+There are two primary ways to organize memory in a computer:
+
+- **Von Neumann Architecture:** Instructions and data share a single memory space and a common bus.
+- **Harvard Architecture:** Instruction memory (ROM) and data memory (RAM) are physically separated, each having its own dedicated address and data buses (as illustrated in @fig-harvard-arch).
+
+```{mermaid}
+%%| label: fig-harvard-arch
+%%| fig-cap: "Harvard Memory Organization in Single-Cycle Datapath"
+flowchart TD
+    ROM["Instruction ROM<br/>(Read-only, driven by PC)"] --> CPU["CPU Core"]
+    CPU <--> RAM["Data RAM<br/>(Read/Write, driven by ALU)"]
+```
+
+In our single-cycle implementation, every instruction must be fetched, decoded, executed, and written back within **a single clock cycle**. 
+
+If memory were unified (Von Neumann), the processor would need to access memory twice in one cycle: first to read the instruction, then to load or store data. This is physically impossible on a single-port memory. 
+
+Therefore, we implement a **Harvard architecture**: instructions are continuously fetched from ROM, while data operations simultaneously access a dedicated RAM block driven by the ALU.
+
+::: {.callout-tip collapse="true"}
+## Learn More - Memory architecture in modern computing
+
+Modern computers appear unified to programmers and users. No one uses two hard disks and files are downloaded and stored as one blob. Despite that, the whole memory hierarchy is organized in a **Modified Harvard Architecture**: separate Level 1 Instruction (L1 I-Cache) and Data (L1 D-Cache) caches designed for single-cycle access, while higher levels (L2/L3 caches), main DRAM, and persistent storage are unified and sit behind them.
+:::
+
+## Memory Instructions
+
+RISC-V is a strict **Load-Store architecture**: arithmetic and logical operations operate exclusively on registers, never directly on memory addresses. Data must be loaded from RAM into registers before computing, and written back to RAM using store instructions.
+
+### Load Word - I-Type
+
+The `lw` instruction loads a 32-bit word from memory into destination register `rd`:
+
+```
+ 31                  20 19      15 14   12 11      7 6            0
++----------------------+----------+-------+---------+--------------+
+|      imm[11:0]       |   rs1    |funct3 |   rd    |    opcode    |
++----------------------+----------+-------+---------+--------------+
+        12 bits           5 bits   3 bits   5 bits       7 bits
+```
+
+* **`opcode`:** `0000011` (`0x03`, `LOAD`).
+* **`funct3`:** `010` (word — 32 bits).
+* **Target Address:** Computed by the ALU as $\text{Address} = rs1 + \text{sign\_ext}(imm)$.
+* **Operation:** $rd \leftarrow \text{RAM}[\text{Address}]$.
+
+### Store Word - S-Type
+
+The `sw` instruction writes a 32-bit word from source register `rs2` into memory.
+
+Because an instruction needs two source registers (`rs1` for the base address and `rs2` for the data to store), there is no `rd` field. Instead, the 12-bit immediate is split into two chunks:
+
+```
+ 31         25 24      20 19      15 14   12 11      7 6            0
++-------------+----------+----------+-------+---------+--------------+
+|  imm[11:5]  |   rs2    |   rs1    |funct3 |imm[4:0] |    opcode    |
++-------------+----------+----------+-------+---------+--------------+
+    7 bits       5 bits     5 bits   3 bits   5 bits       7 bits
+```
+
+* **`opcode`:** `0100011` (`0x23`, `STORE`).
+* **`funct3`:** `010` (word — 32 bits).
+* **Target Address:** Computed by the ALU as $\text{Address} = rs1 + \text{sign\_ext}(\{imm[11:5], imm[4:0]\})$.
+* **Operation:** $\text{RAM}[\text{Address}] \leftarrow rs2$.
+
+::: {.callout-tip}
+Notice that in both I-type (`lw`) and S-type (`sw`), the base register `rs1` remains at bits `[19:15]`, and in S-type the data source `rs2` is at bits `[24:20]`. Keeping register indices in identical positions across all formats greatly simplifies the hardware wiring.
+:::
+
+## Integrating Data Memory
+
+To support `lw` and `sw`, we need to add two hardware elements to our datapath:
+
+1. **A Data RAM Block:**
+   - **Address input (`A`):** Driven by the ALU output (`Result`), which calculates $rs1 + \text{imm}$.
+   - **Data input (`in`):** Driven by `rd2` of the Register File (the data held in register `rs2`).
+   - **Write Enable (`MemWrite`):** Driven by the Control Unit (active high only for store instructions).
+   - **Clock (`clk`):** Synchronous write on the rising clock edge.
+2. **A Result Multiplexer (`ResultSrc`):**
+   After execution, what should be written back to register `rd` (as shown in the datapath in @fig-datapath-memory)?
+
+   - **`ResultSrc = 00`:** ALU output (for arithmetic and logic instructions).
+   - **`ResultSrc = 01`:** Data read from RAM (for `lw`).
+   - **`ResultSrc = 10`:** $PC + 4$ (for `jal` and `jalr` link addresses).
+
+```{mermaid}
+%%| label: fig-datapath-memory
+%%| fig-cap: "Integrating Data RAM and ResultSrc Multiplexer"
+flowchart TD
+    ALU["ALU Output<br/>(Calculates Address)"] --> RAM["Data RAM<br/>(Address)"]
+    RF2["RegFile [rd2]<br/>(Data to store)"] --> RAM
+    ALU --> MUX["ResultSrc MUX"]
+    RAM -->|Read Data| MUX
+    PC4["PC + 4"] --> MUX
+    MUX -->|Writeback Data| RF["RegFile (wd)"]
+```
+
+### Control Unit Updates
+
+Both `lw` and `sw` use the ALU to compute the effective memory address:
+$$
+\text{Effective Address} = rs1 + \text{offset}
+$$
+
+Regardless of what bits happen to appear in other instruction fields, whenever opcode is `LOAD` (`0000011`) or `STORE` (`0100011`), the ALU control unit must force an `ADD` (`0000`) operation.
+
+::: {.callout-note icon=false}
+## Exercise 4.1: Integrate Memory
+
+1. Place a **RAM** component from Digital's component library into your processor circuit.
+2. Connect `ALUResult[31:2]` to the address input of the RAM (Digital's RAM addresses 32-bit words, so bits `[1:0]` select bytes within words).
+3. Connect `rd2` from your Register File to the RAM `Din` input.
+4. Expand the writeback multiplexer (`ResultSrc`) to a 3-way 32-bit MUX:
+   - Input `00`: `ALUResult`
+   - Input `01`: Data read from RAM
+   - Input `10`: $PC + 4$
+5. Update your main decoder to output `MemWrite = 1` for `sw`, and `ResultSrc = 01` with `RegWrite = 1` for `lw`.
+6. Based on your `ALUControl` circuitry architecture, ensure the ALU performs an `ADD` operation for `LOAD` and `STORE` opcodes.
+
+:::
+
+## Testing Memory
+
+Before building sub-word operations or complex algorithms, verify that your processor can write data to RAM and read it back reliably.
+
+Consider this test sequence:
+
+```asm
+        # Register allocation:
+        # x1: base memory address
+        # x2: value to write (42)
+        # x3: value read back
+
+        li   x1, 0x0000         # Base address = 0
+        li   x2, 42             # Test value = 42 (0x2A)
+
+        sw   x2, 0(x1)          # Store 42 into RAM[0]
+        li   x2, 0              # Clear register x2 to prove read works
+
+        lw   x3, 0(x1)          # Load value back from RAM[0] into x3
+
+        # Verification check:
+        li   t0, 42
+        bne  x3, t0, fail       # If x3 != 42, branch to fail
+
+pass:
+        li   x4, 1              # x4 = 1 indicates success
+        j    hang
+
+fail:
+        li   x4, 0xFF           # x4 = 0xFF indicates failure
+
+hang:
+        j    hang               # Halt in loop
+```
+
+::: {.callout-note icon=false}
+## Exercise 4.2: Verify Basic Load and Store in Digital
+
+1. Assemble the test program above into hexadecimal machine code.
+2. Load the `.hex` file into your Instruction ROM.
+3. Step through the simulation clock by clock:
+   - In cycle 3 (`sw x2, 0(x1)`): verify that `MemWrite` pulses high, and the RAM contents at address `0` update to `0x0000002A`.
+   - In cycle 5 (`lw x3, 0(x1)`): verify that `ResultSrc` selects RAM output, and register `x3` is updated with `42`.
+   - Verify that execution jumps to `pass:` and sets `x4 = 1`.
+
+:::
+
+## Byte and Half-word memory operations
+
+While 32-bit words are optimal for arithmetic and pointer manipulation, real software constantly handles smaller data types:
+
+- 8-bit bytes (`char` in C, ASCII strings, network packets),
+- 16-bit halfwords (`short` in C, audio samples, sensor readings).
+
+RV32I specifies native instructions for sub-word accesses:
+
+| Mnemonic | Instruction | Access Size | Sign Extension | `funct3` | Opcode |
+|:---|:---|:---:|:---:|:---:|:---:|
+| **`lb`** | Load Byte | 8 bits | Sign-extended to 32 bits | `000` | `0000011` |
+| **`lbu`** | Load Byte Unsigned | 8 bits | Zero-extended to 32 bits | `100` | `0000011` |
+| **`lh`** | Load Halfword | 16 bits | Sign-extended to 32 bits | `001` | `0000011` |
+| **`lhu`** | Load Halfword Unsigned | 16 bits | Zero-extended to 32 bits | `101` | `0000011` |
+| **`lw`** | Load Word | 32 bits | None (full word) | `010` | `0000011` |
+| **`sb`** | Store Byte | 8 bits | Low 8 bits of $rs2$ written | `000` | `0100011` |
+| **`sh`** | Store Halfword | 16 bits | Low 16 bits of $rs2$ written | `001` | `0100011` |
+| **`sw`** | Store Word | 32 bits | Full 32 bits of $rs2$ written | `010` | `0100011` |
+
+### Byte Alignment
+
+Memory in RISC-V is **byte-addressed** with the smallest data size being 8 bits. A standard 32-bit word consists of 4 bytes, meaning a memory address can point to 4 byte positions inside a word. 
+
+While addressing memory, 30 bits point to a location inside the data bank, and the lowest 2 bits work as a pointer to the specific byte within:
+
+$$
+\text{Byte Offset} = \text{Address}[1:0]
+$$
+
+To handle sub-word operations without disrupting existing circuitry, we will use special blocks for interfacing with the memory:
+
+1. **`mem_data_tx.dig` (Store Steering):**  
+   Takes the raw 32-bit data from $rs2$, `funct3`, and `Address[1:0]`. As shown in @fig-mem-data-tx, it replicates/shifts the byte or halfword to the appropriate byte lane inside the 32-bit write word:
+
+   - For `sb` at offset `0`: places bits `[7:0]` into byte 0 (`[7:0]`).
+   - For `sb` at offset `1`: shifts bits `[7:0]` into byte 1 (`[15:8]`).
+   - For `sh` at offset `0`: places bits `[15:0]` into bytes 0 and 1 (`[15:0]`).
+   - For `sh` at offset `2`: shifts bits `[15:0]` into bytes 2 and 3 (`[31:16]`).
+   - For `sw`: passes full 32 bits unchanged.
+
+```{mermaid}
+%%| label: fig-mem-data-tx
+%%| fig-cap: "mem_data_tx.dig: Store Data Steering Architecture"
+flowchart TD
+    RS2["Register rd2<br/>data[31:0]"]
+    ADDR["ALU Address<br/>addr[1:0]"]
+    F3["Instruction<br/>funct3[1:0]"]
+
+    RS2 --> S_B["Byte Slice<br/>data[7:0]"]
+    RS2 --> S_H["Halfword Slice<br/>data[15:0]"]
+    RS2 --> S_W["Word Slice<br/>data[31:0]"]
+
+    S_B --> M_B["Byte Lane Steering<br/>(Shift/Replicate to Lanes 0..3)"]
+    ADDR --> M_B
+
+    S_H --> M_H["Halfword Steering<br/>(Lanes [15:0] or [31:16])"]
+    ADDR --> M_H
+
+    M_B -->|"00 (sb)"| MUX["32-bit Output MUX"]
+    M_H -->|"01 (sh)"| MUX
+    S_W -->|"10 (sw)"| MUX
+    F3 -->|Select| MUX
+
+    MUX --> D2M["Aligned Write Data<br/>data2mem[31:0]"]
+```
+
+2. **`mem_data_rx.dig` (Load Steering & Extension):**  
+   Takes the 32-bit word read from RAM, `funct3`, and `Address[1:0]`. As shown in @fig-mem-data-rx, it extracts the targeted byte or halfword, and sign-extends or zero-extends it to a full 32-bit value for the register file writeback port:
+
+   - For `lb` / `lbu`: selects byte 0, 1, 2, or 3 based on `Address[1:0]`. Extends with sign bit (`lb`, `funct3[2]=0`) or zeros (`lbu`, `funct3[2]=1`).
+   - For `lh` / `lhu`: selects low halfword (`Address[1]=0`) or high halfword (`Address[1]=1`). Extends with sign bit (`lh`, `funct3[2]=0`) or zeros (`lhu`, `funct3[2]=1`).
+   - For `lw`: passes full 32-bit read word directly.
+
+```{mermaid}
+%%| label: fig-mem-data-rx
+%%| fig-cap: "mem_data_rx.dig: Load Data Steering and Sign/Zero Extension Architecture"
+flowchart TD
+    RAM["RAM Read Word<br/>data_in[31:0]"]
+    ADDR["ALU Address<br/>addr[1:0]"]
+    F3["Instruction<br/>funct3[2:0]"]
+
+    RAM --> B_SPLIT["Byte Lanes<br/>B0[7:0], B1[15:8], B2[23:16], B3[31:24]"]
+    RAM --> H_SPLIT["Halfword Lanes<br/>H0[15:0], H1[31:16]"]
+    RAM --> W_PATH["Word Pass-Through<br/>[31:0]"]
+
+    B_SPLIT --> B_MUX["8-bit 4:1 MUX<br/>(addr[1:0])"]
+    ADDR --> B_MUX
+    B_MUX --> B_SIGN["Sign Extender<br/>{24{b[7]}, b}"]
+    B_MUX --> B_ZERO["Zero Extender<br/>{24'b0, b}"]
+    B_SIGN --> B_SEL["32-bit MUX<br/>(funct3[2])"]
+    B_ZERO --> B_SEL
+    F3 -->|funct3[2]: 0=lb, 1=lbu| B_SEL
+
+    H_SPLIT --> H_MUX["16-bit 2:1 MUX<br/>(addr[1])"]
+    ADDR --> H_MUX
+    H_MUX --> H_SIGN["Sign Extender<br/>{16{h[15]}, h}"]
+    H_MUX --> H_ZERO["Zero Extender<br/>{16'b0, h}"]
+    H_SIGN --> H_SEL["32-bit MUX<br/>(funct3[2])"]
+    H_ZERO --> H_SEL
+    F3 -->|funct3[2]: 0=lh, 1=lhu| H_SEL
+
+    B_SEL -->|"00 (lb/lbu)"| OUT_MUX["32-bit Output MUX<br/>(funct3[1:0])"]
+    H_SEL -->|"01 (lh/lhu)"| OUT_MUX
+    W_PATH -->|"10 (lw)"| OUT_MUX
+    F3 -->|funct3[1:0]| OUT_MUX
+
+    OUT_MUX --> D2C["Extended Load Data<br/>data2core[31:0]<br/>(to ResultSrc MUX)"]
+```
+
+### Masked Memory
+
+Using data steering in the CPU will still store a full 32 bits. For a fully working interface, a **masked memory** is needed. It works by storing only selected bytes of incoming data, preserving data already stored in other memory bytes.
+
+Without masking, storing a single byte would overwrite all 4 bytes of the word, corrupting neighboring variables. To prevent this, the memory block is split into four 8-bit RAM banks, each gated by an independent 1-bit write strobe: **`byteWE[3:0]`**, as illustrated in @fig-masked-ram.
+
+```{mermaid}
+%%| label: fig-masked-ram
+%%| fig-cap: "Masked Byte-Write RAM Organization"
+flowchart TD
+    DataIn["32-bit Aligned Data<br/>(from mem_data_tx)"] --> B0["RAM Byte 0<br/>bits [7:0]"]
+    DataIn --> B1["RAM Byte 1<br/>bits [15:8]"]
+    DataIn --> B2["RAM Byte 2<br/>bits [23:16]"]
+    DataIn --> B3["RAM Byte 3<br/>bits [31:24]"]
+
+    WE0["byteWE[0]"] --> B0
+    WE1["byteWE[1]"] --> B1
+    WE2["byteWE[2]"] --> B2
+    WE3["byteWE[3]"] --> B3
+```
+
+::: {.callout-note icon=false}
+## Exercise 4.3: Implement the Load-Store Unit
+
+1. Insert `mem_data_tx.dig` between register file `rd2` and the memory data input. Connect:
+   - `data` $\leftarrow$ `rd2`
+   - `funct3` $\leftarrow$ `instruction[14:12]`
+   - `addr` $\leftarrow$ `ALUResult[1:0]`
+   - `data2mem` $\rightarrow$ Memory data input
+2. Insert `mem_data_rx.dig` between memory data output and input `01` of the `ResultSrc` multiplexer. Connect:
+   - `data_in` $\leftarrow$ Memory data output
+   - `funct3` $\leftarrow$ `instruction[14:12]`
+   - `addr` $\leftarrow$ `ALUResult[1:0]`
+   - `data2core` $\rightarrow$ `ResultSrc[01]`
+3. Connect masked memory (`BRAM_masked.dig`) or generate `byteWE[3:0]` from `funct3`, `ALUResult[1:0]`, and `MemWrite`.
+4. Assemble a test writing a byte (`sb`), a halfword (`sh`), and verifying sign extension with `lb` and zero extension with `lbu`.
+:::
+
+## Call Stack and Stack Pointer `sp`
+
+In the previous lab, we mentioned the issue with nested function calls. Each new call overwrites the `ra` register, losing the previous return address. To not lose it we can use data memory, but nesting requires preservation of the sequence of return addresses. We could store pointers and each stored address would be paired with a pointer to the next, but this is a waste of memory, requires two operations per load/store, and is a pain when storing register values.
+
+To solve this, the processor uses a **Call Stack** (called Stack) - a dedicated region of data memory where registers and addresses are stored in Last-In-First-Out (LIFO) order. This allows using only one pointer moving up or down, and removes constraints on data size or structure since function calling knows it internally.
+
+### The Stack Pointer (`sp` = `x2`)
+
+Following the RISC-V ABI convention, register `x2` is designated as **Stack Pointer** `sp`. The stack in RISC-V is full descending, meaning the starting address is the last address of the Data Memory and grows towards lower addresses.
+
+### Stack Frame Idiom
+
+The ABI also specifies how data should be stored on the stack, but it is important to highlight that the order of data is fully up to you or the compiler.
+
+When a function begins, it allocates space on the stack (**function prologue**):
+```asm
+        addi sp, sp, -16        # Allocate 16 bytes on stack (16-byte aligned)
+        sw   ra, 12(sp)         # Preserve return address
+        sw   s0, 8(sp)          # Preserve callee-saved register s0
+```
+
+Before returning, it restores preserved registers and deallocates the space (**function epilogue**):
+```asm
+        lw   s0, 8(sp)          # Restore s0
+        lw   ra, 12(sp)         # Restore original ra
+        addi sp, sp, 16         # Deallocate stack frame
+        ret                     # Return to caller
+```
+
+::: {.callout-note icon=false}
+## Exercise 4.4: Nested Fibonacci
+
+In Lab 3, you implemented Fibonacci iteratively using a loop and as a leaf function. Now, implement Fibonacci using **nested/recursive calls** to prove that your Call Stack correctly preserves return addresses and local state:
+
+$$
+F(0) = 0, \quad F(1) = 1, \quad F(n) = F(n-1) + F(n-2)
+$$
+
+```text
+  16-Byte Stack Frame Organization (Full Descending):
+  High Address
+  +-----------------------------------+
+  | sp + 12: Return Address (ra)      |  <-- Saved return address
+  +-----------------------------------+
+  | sp + 8:  Saved Register s0 (n)    |  <-- Saved argument n
+  +-----------------------------------+
+  | sp + 4:  Saved Register s1 (Fib)  |  <-- Saved intermediate Fib(n-1)
+  +-----------------------------------+
+  | sp + 0:  Padding (16-byte align)  |  <-- Stack Pointer (sp) after allocation
+  +-----------------------------------+
+  Low Address
+```
+
+Use the following `main` test harness:
+
+```asm
+        .globl main
+main:
+        li   sp, 0x00003FFC     # Initialize stack pointer (top of 16 KB RAM)
+        li   a0, 6              # Compute Fib(6)
+        jal  ra, fib
+hang:   j    hang               # Expected on return: a0 = 8 (Fib(6) = 8)
+```
+
+**Task Requirements:**
+
+1. Implement the recursive subroutine `fib`:
+   - **Base case:** If $n \le 1$, return $n$ directly in `a0` without allocating stack space.
+   - **Recursive case ($n > 1$):**
+     - In the **prologue**, allocate a 16-byte stack frame (`addi sp, sp, -16`) and preserve `ra`, `s0`, and `s1`.
+     - Save $n$ in `s0`, call `fib(n - 1)`, and store the result in `s1`.
+     - Call `fib(n - 2)`, add the result with `s1`, and place the sum in `a0`.
+     - In the **epilogue**, restore `s1`, `s0`, and `ra` from the stack, deallocate the frame (`addi sp, sp, 16`), and return using `ret`.
+2. Assemble your program and load the machine code into your processor's ROM.
+3. Step through the simulation in Digital:
+   - Observe register `sp` decrementing by 16 bytes on each recursive call.
+   - Verify that intermediate return addresses and registers are written to RAM and read back correctly.
+4. Verify that execution reaches the `hang:` loop with `a0 = 8` (`0x00000008`).
+:::
+
+## Validating Core with Risc-V tests
+
+Rather than relying solely on manual tests, standard processor verification uses the official **`riscv-tests`** compliance suite (developed by UC Berkeley and RISC-V International).
+
+### In-Memory Verification
+
+Official test suites typically report results via a special CSR register (`tohost`). Because our core does not yet support CSRs in this lab, the test harness reports results directly into Data Memory:
+
+* **Status Address:** `RAM[0]` (Address `0x00000000` of Data RAM).
+* **Test Outcome:**
+  * **PASS:** The test writes `1` (`0x00000001`) to `RAM[0]`.
+  * **FAIL:** The test writes the failing test case number stored in `gp` (`x3`, e.g. `0x00000007`) to `RAM[0]`.
+* **Halt:** The core enters an infinite loop (`1: j 1b`).
+
+```asm
+# In-memory test completion handlers:
+pass:
+        li   t0, 0              # Address 0 of Data RAM
+        li   t1, 1              # Status = 1 (PASS)
+        sw   t1, 0(t0)
+1:      j    1b                 # Halt in loop
+
+fail:
+        li   t0, 0              # Address 0 of Data RAM
+        sw   gp, 0(t0)          # Store failing testcase number (gp)
+1:      j    1b                 # Halt in loop
+```
+
+### Automated Verification Runner (`verify_core.py`)
+
+The course package provides an automated verification tool: [`lab-package/scripts/verify_core.py`](file:///home/coder/projects/i2ca/lab-package/scripts/verify_core.py). It interacts directly with Digital's simulation engine in headless mode:
+
+- **Zero Datapath Modifications:** You do not need to add any artificial status pins, probes, or alter your circuit.
+- **Precompiled Official Test Suite:** It automatically loads the precompiled compliance test (`rv32i_test.hex`) into Instruction ROM.
+- **Support for Sub-Word Masked RAM:** It automatically detects whether your memory subsystem uses a single 32-bit RAM or four 8-bit masked banks (`RAM0-7`, `RAM8-15`, `RAM16-23`, `RAM24-31`), reconstructing word 0 according to RISC-V Little-Endian alignment.
+
+::: {.callout-note icon=false}
+## Exercise 4.5: Validate Complete RV32I Core with riscv-tests
+
+Run the automated verification suite against your processor circuit:
+
+```bash
+python3 scripts/verify_core.py
+```
+
+Or specify a custom circuit path:
+```bash
+python3 scripts/verify_core.py --circ hardware/digital/hart.dig
+```
+
+For processor designs using memory-mapped RAM (`0x00008000`, e.g. `hart.dig` or Lab 5+ unified memory), pass the `--cmem` flag:
+```bash
+python3 scripts/verify_core.py --circ ref-model/hw/digital/hart.dig --cmem
+```
+
+If a test fails, the runner reports the exact failing instruction group (e.g. ALU, Shifts, Comparisons, Branches, or Memory Operations) and the subtest index for instant debugging.
+:::
+
+## Look Ahead: Physical Constraints
+
+Congratulations! You have completed a fully functional single-cycle RV32I core verified by official compliance tests!
+
+As you can guess there is a catch. Everything designed so far lives inside the ideal world of digital simulation with disregard for real-world constraints and physics. For your processor to be functional on an FPGA, a few modifications must be made.
+
+It was also mentioned that to programmers, processor memory appears as unified, but our memory is not. This will also be addressed in the next laboratory.

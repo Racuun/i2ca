@@ -1,0 +1,373 @@
+---
+title: "RISC-V Assembly & Flow Control"
+author: "Łukasz Kmiecik"
+---
+
+## Introduction
+
+In this laboratory, you will learn about assembly and how to use it, how to control the flow of instructions in the processor, and how to implement loops and subroutines. You will implement branch and jump instructions and use higher abstractions to write code.
+
+## Assembly Language
+
+Machine code consists of raw 32-bit binary words hardly readable for humans. **Assembly** replaces binary numbers with symbolic mnemonics, drastically improving readability without interfering in instruction encodings.
+
+```asm
+# Machine code (Hex)       # Assembly language
+0x002081B3          <--->  add  x3, x1, x2      # x3 = x1 + x2
+0x00500093          <--->  addi x1, x0, 5       # x1 = 0 + 5
+```
+
+These mnemonics directly represent specific instructions or pseudo-instructions. Translation of assembly is strictly deterministic and direct without any intermediate steps. Responsible for this translation is software called an **assembler**. It takes text files (`.s`, `.asm`) and outputs numeric machine code words (`.hex`) ready to be loaded into instruction memory.
+
+::: {.callout-tip}
+Code written using assembly is often also referred to as "written in assembler". While technically not true, it is widely used and not treated as an offense.
+:::
+
+::: {.callout-important}
+The process of translating assembly into binary is called assembling and is _drastically different from compilation_! Assembling can be a part of the compilation process.
+:::
+
+### Anatomy of an assembly statement
+
+An assembly line generally contains three optional elements and an instruction:
+
+```asm
+[label:]    mnemonic    [operands]    [# comment]
+```
+
+* **Mnemonic:** The instruction name (`add`, `sub`, `beq`, `jal`).
+* **Operands:** Target registers, source registers, or constant values separated by commas.
+* **Comment:** Anything following `#` is ignored by the assembler.
+* **Label:** A symbolic name followed by a colon (e.g., `loop:`, `skip:`). Labels mark memory addresses so you never have to manually calculate byte offsets.
+
+### The Power of Pseudo-instructions
+
+RISC-V hardware only implements a minimal, essential set of instructions. To make programming convenient, the assembler provides **pseudo-instructions** - shorthand commands that do not exist in silicon, but which the assembler automatically translates into native instructions:
+
+| Pseudo-instruction | Description | Translates to Native Hardware Instruction |
+|:---|:---|:---|
+| `nop` | No operation (do nothing) | `addi x0, x0, 0` |
+| `li rd, constant` | Load 32-bit immediate | `addi rd, x0, imm` (or `lui` + `addi`) |
+| `mv rd, rs` | Copy register ($rd \leftarrow rs$) | `addi rd, rs, 0` |
+| `not rd, rs` | Bitwise NOT | `xori rd, rs, -1` |
+| `neg rd, rs` | Arithmetic negation ($-rs$) | `sub  rd, x0, rs` |
+| `j label` | Unconditional jump | `jal  x0, label` |
+| `ret` | Return from subroutine | `jalr x0, 0(ra)` |
+
+Using `li x1, 42` is much cleaner than remembering that you must add 42 to the hardwired zero register `x0`. The assembler takes care of the translation.
+
+### RISC-V Assembler
+
+// TODO: Using Assembler
+
+::: {.callout-note icon=false}
+## Exercise 3.1: Sequential Fibonacci in Assembly
+
+Write a short assembly program that calculates the first five Fibonacci numbers.
+
+1. Create a `.s` file in your project directory  <!-- TODO: When ready add where1 --> 
+2. Write your code (can use cheatsheet)
+3. Assemble your code
+4. Import `.hex` into ROM and test it
+:::
+
+## Problem with lack of control
+
+If you had experience with programming before, your initial instinct was to use a loop or recursion as it is the most common approach taught in coding classes. However, we have not yet mentioned any conditional instructions, how functions are executed, or how loops are structured in assembly.
+
+
+Consider a standard conditional statement in C:
+
+```c
+if (a == b){
+    x = x + 1;
+}
+```
+
+To execute this, the processor must:
+
+1. Compare variables `a` and `b`.
+2. If they are equal, execute the addition.
+3. If they are **not** equal, **skip** the addition by jumping past it.
+
+Currently our processor can only execute instructions in the exact physical order as they appear in memory. To support decisions and loops, we must give the Program Counter the ability to jump and navigate through instructions.
+
+## Conditional Branching: B-Type Instructions
+
+Computer architects call conditional jumping **branching**, like tree branches splitting in two. In RISC-V, conditional branches compare two registers. If the condition evaluates to true, the CPU jumps to a PC-relative target address, meaning it adds an offset to the current PC value. Otherwise, it continues with the execution of the next instruction.
+
+### The B-Type Instruction Structure
+
+Branch instructions have a dedicated instruction encoding format:
+
+```
+ 31 30      25 24      20 19      15 14   12 11      8  7 6            0
++--+----------+----------+----------+-------+---------+--+--------------+
+|12|imm[10:5] |   rs2    |   rs1    |funct3 |imm[4:1] |11|    opcode    |
++--+----------+----------+----------+-------+---------+--+--------------+
+  1     6           5          5        3        4     1       7 bits
+```
+
+* **`opcode`:** `1100011` (`0x63`, `BRANCH`). Bits `opcode[6:2] = 11000`.
+* **`rs1` & `rs2`:** Source registers to compare (`inst[19:15]` and `inst[24:20]`).
+* **`rd`:** **None!** Branches compare registers, but do not write any arithmetic result back to the register file.
+
+Notice how bizarre the immediate encoding is. This immediate is a 12-bit signed byte offset for the PC and is chopped into four separate slices: `imm[12]`, `imm[11]`, `imm[10:5]`, and `imm[4:1]`. Bit 0 is omitted because instructions are always 2-byte aligned (the least significant bit, bit 0, is always 0).
+
+If you had to encode a branch by hand, you would have to calculate the relative byte distance from the current instruction, split the number into bit fragments, and shuffle them into the instruction word.
+
+In assembly, you never do this. You simply write:
+```asm
+beq a0, a1, match_found
+```
+The assembler calculates the distance to `match_found:`, slices the immediate bits, and packs them into the B-type format automatically.
+
+### Equality Checks: `beq` and `bne`
+
+When comparing two numbers $A$ and $B$, instead of creating dedicated circuitry, we can use natural characteristics of equations and substitute $A = B$ (`beq`) with $A - B = 0$ and $A \neq B$ (`bne`) with $A - B \neq 0$. 
+
+Our ALU already implements subtraction (`SUB`, `ALUControl = 1000`) and produces a 1-bit **`Zero`** flag:
+
+* For **`beq`**, the branch is taken when $\text{Zero} == 1$.
+* For **`bne`**, the branch is taken when $\text{Zero} == 0$.
+
+### Magnitude Comparisons: `blt`, `bge`, and Unsigned Variants
+
+Loops frequently evaluate inequalities ($A < B$ or $A \ge B$). The ALU evaluates $rs1 < rs2$ using `SLT` (signed, `ALUControl = 0010`) or `SLTU` (unsigned, `ALUControl = 0011`):
+
+Because `SLT` and `SLTU` strictly output `0x00000001` (true) or `0x00000000` (false), the least significant bit directly gives the comparison:
+
+* For **`blt`** / **`bltu`**, the branch is taken when $\text{ALUResult}[0] == 1$.
+* For **`bge`** / **`bgeu`**, the condition is inverted ($\text{ALUResult}[0] == 0$).
+
+What about "greater than" (`bgt`) and "less or equal" (`ble`)? In RISC-V they are pseudo-instructions due to simple exchange:
+$$
+A > B \iff B < A \quad \text{and} \quad A \le B \iff B \ge A
+$$
+The assembler simply swaps the register positions when emitting `blt` or `bge`.
+
+
+## Implementing Branching in Datapath
+
+Branches add more complexity to our CPU.
+
+### Branch Target Adder
+
+When a branch is taken, the target address is relative to the current instruction:
+$$
+PC_{\text{target}} = PC + \text{sign\_ext}(\text{imm}_B)
+$$
+
+Because the main ALU is busy performing the comparison ($rs1 - rs2$ or `SLT`), we add a **dedicated 32-bit Adder** operating in parallel with the ALU. It takes the current $PC$ and the sign-extended immediate from the extender and computes $PC_{\text{target}}$.
+
+### Next-PC Multiplexer
+
+Currently, the output of the $PC+4$ adder is directly wired into the $PC$ register. We need to insert a 2:1 multiplexer:
+
+* **Input 0:** $PC + 4$ (normal execution).
+* **Input 1:** $PC_{\text{target}}$ (branch taken).
+
+The selector signal, **`PCSrc`**, is asserted when the instruction is a Branch and the condition evaluates to true, as illustrated in @fig-branch-datapath:
+
+```{mermaid}
+%%| label: fig-branch-datapath
+%%| fig-cap: "Branch Datapath with Target Adder and Next-PC MUX"
+flowchart TD
+    PC["Program Counter (PC)"] --> Add4["Adder (+4)"]
+    PC --> AddBranch["Branch Adder (+ imm)"]
+    Add4 --> PCMUX["Next-PC MUX"]
+    AddBranch --> PCMUX
+    PCMUX --> NextPC["PC Input"]
+
+    Instr["Instruction Word"] --> Ext["extend.dig"]
+    Ext --> AddBranch
+
+    Instr --> Dec["Decoder (opcode[6:2] == 11000)"]
+    ALUZero["ALU Flags (Zero / SLT)"] --> BLogic["Branch Logic (funct3)"]
+    Dec -->|Branch| BLogic
+    BLogic -->|PCSrc| PCMUX
+```
+
+### Control Unit Update
+
+In the main decoder, new control signals must be added:
+
+1. `RegWrite = 0`: Branches do not modify register contents.
+2. `ALUSrc = 0`: ALU compares register values and does not take an immediate.
+3. `Branch = 1`: Enables branch evaluation logic.
+
+::: {.callout-note icon=false}
+## Exercise 3.2: Implement Branching
+
+1. Add a dedicated 32-bit Adder that computes $PC + \text{imm}$ and connect it to $PC$ register via multiplexer.
+2. Based on your `ALUCtrl` logic design implement subtraction for `beq`/`bne` and `SLT`/`SLTU` for `blt`/`bltu`/`bge`/`bgeu`.
+3. Implement the branch decision logic using `funct3`, the ALU `Zero` flag, and `ALUResult[0]`:
+    - When `funct3 == 000` (`beq`): branch taken if $\text{Zero} == 1$.
+    - When `funct3 == 001` (`bne`): branch taken if $\text{Zero} == 0$.
+    - When `funct3 == 100` (`blt`): branch taken if $\text{ALUResult}[0] == 1$.
+    - When `funct3 == 101` (`bge`): branch taken if $\text{ALUResult}[0] == 0$.
+    - When `funct3 == 110` (`bltu`): branch taken if $\text{ALUResult}[0] == 1$.
+    - When `funct3 == 111` (`bgeu`): branch taken if $\text{ALUResult}[0] == 0$.
+4. Update your main decoder to output `Branch = 1`, `RegWrite = 0`, and `ALUSrc = 0` for opcode `11000`. The multiplexer selector `PCSrc` should be `Branch AND ConditionMet`.
+:::
+
+## Ifs and Loops in Assembly
+
+Now that your processor supports branching, we can use more advanced algorithms than just sequential execution.
+
+Let's start with a simple loop summing integers from 1 to 5:
+```c
+int n = 5;
+int sum = 0;
+while (n != 0) {
+  sum += n;
+  n--;
+}
+```
+
+In RISC-V assembly, such logic will be expressed using a backward branch:
+```asm
+        li x1, 5          # n = 5
+        li x2, 0          # sum = 0
+
+loop:
+        add x2, x2, x1    # sum = sum + n
+        addi x1, x1, -1   # n = n - 1
+        bne x1, x0, loop  # if n != 0, continue loop
+
+done:
+        ...               # rest of the code
+```
+
+::: {.callout-note icon=false}
+## Exercise 3.3: Fibonacci with Loop
+
+Modify your initial sequential Fibonacci code to use a branching loop, and verify it in Digital.
+:::
+
+
+## Unconditional Jumps and Procedures
+
+Loops allow iterating, but modern software is built out of **modular functions (subroutines)**. To implement a function call, a processor needs two capabilities:
+
+1. Jump to the function's start address.
+2. Remember the return address so the function knows where to jump back when it finishes.
+3. Execute the function.
+4. Return to the original code.
+
+For this purpose, jumping instructions were introduced. They differ from branches by being unconditional and saving the return address.
+
+### `jal` - Jump and Link (J-Type)
+
+The `jal` instruction performs a PC-relative jump, same as branches, and saves the return address into a register:
+
+```
+ 31 30         21 20 19      12 11      7 6            0
++--+-------------+--+----------+---------+--------------+
+|20|  imm[10:1]  |11|imm[19:12]|   rd    |    opcode    |
++--+-------------+--+----------+---------+--------------+
+  1       10       1      8       5 bits       7 bits
+```
+
+* **`opcode`:** `1101111` (`0x6F`, `JAL`). Bits `opcode[6:2] = 11011`.
+* **Target Address:** $PC \leftarrow PC + \text{sign\_ext}(imm_J)$ (range $\pm 1 \text{ MB}$).
+* **Link:** Saves the return address ($PC + 4$) into destination register: $rd \leftarrow PC + 4$.
+
+By convention, when calling a subroutine, software sets `rd` to `ra` (`x1`, the Return Address register).
+```asm
+jal ra, my_function    # Jump to my_function, save PC+4 in ra
+```
+
+In some cases we perform an unconditional jump without saving a return address. For that, RISC-V assembly provides a pseudo-instruction `j`, translating directly to `jal` where `rd` is set to `x0` (the hardwired zero register, which ignores write data):
+```asm
+j my_label             # Translates to: jal x0, my_label
+```
+
+### `jalr` - Jump and Link Register (I-Type)
+
+When returning from a function (subroutine), the CPU needs to jump to an address stored in a register. Simple `jal` won't suffice, thus a new instruction `jalr` was introduced. 
+
+In different ISAs (like AVR or x86) there is a dedicated `ret` instruction for returning from subroutines. In modern RISC-V `jalr` does the same, but also allows navigation to every dynamic address in memory.
+
+* **Format:** I-type (`opcode = 1100111` / `0x67`, `funct3 = 000`).
+* **Target Address:** Jumps to the register value plus immediate (last bit must be 0):
+    $$
+    PC \leftarrow (rs1 + \text{sign\_ext}(imm_I)) \ \& \ \sim 1
+    $$
+
+* **Link:** Saves $PC + 4$ into `rd`.
+
+For returning from a subroutine, the assembler provides the `ret` pseudo-instruction:
+```asm
+ret       # same as: jalr x0, 0(ra)
+```
+The CPU jumps to the return address stored in `ra`, discarding the link into `x0`.
+
+### Calling Functions Anywhere: `auipc`
+
+Because instructions are 32 bits long, no single instruction can jump to an arbitrary 32-bit address across the entire 4 GB address space. 
+
+To form full 32-bit PC-relative addresses, RISC-V pairs `jalr` with **`auipc`** (Add Upper Immediate to PC):
+
+* **Format:** U-type (`opcode = 0010111` / `0x17`).
+* **Operation:** $rd \leftarrow PC + (\text{imm}[31:12] \ll 12)$.
+
+Combined with `jalr`, software can invoke a function anywhere in memory:
+```asm
+auipc ra, upper20      # ra = PC + (upper20 << 12)
+jalr  ra, lower12(ra)  # Jump to ra + lower12, save return address in ra
+```
+
+It also allows storing PC addresses in registers, which is useful in complex data structures and pointers.
+
+::: {.callout-note icon=false}
+## Exercise 3.4: Implementing Jumps and `auipc`
+
+1. **Writing Return Address:** Currently, the Register File input data port (`wd`) is connected to the ALU output. A multiplexer must be added to allow storing return addresses ($PC + 4$).
+2. **PC as ALU source:** For `auipc` support, ALU `SrcA` must allow the current $PC$ as input (a multiplexer must be added).
+3. **Next-PC MUX:** 
+    * For `jal`: the target address is $PC + \text{imm}_J$, calculated by the Branch Target Adder.
+    * For `jalr`: the target address is $rs1 + \text{imm}_I$, calculated by the main ALU, with bit 0 cleared to 0.
+4. **Decoder:** Add control signals for the three new instructions (`jal`, `jalr`, `auipc`), configuring writeback, ALU source, and Next-PC multiplexers.
+5. Verify your implementation by clocking jump instructions in Digital.
+:::
+
+
+### Procedural Programming and ABI
+
+When multiple subroutines collaborate, they must agree on how to pass parameters, return values, and preserve register values. The RISC-V **Application Binary Interface (ABI)** establishes standard rules:
+
+| Register | ABI Name | Role in Functions | Preserved across calls? |
+|:---:|:---:|:---|:---:|
+| `x0` | `zero` | Constant 0 | Constant |
+| `x1` | `ra` | Return address | **No** (Caller-saved) |
+| `x2` | `sp` | Stack pointer (for Lab 4) | **Yes** (Callee-saved) |
+| `x10–x11` | `a0–a1` | Function arguments / Return values | **No** (Caller-saved) |
+| `x12–x17` | `a2–a7` | Function arguments | **No** (Caller-saved) |
+| `x5–x7`, `x28–x31` | `t0–t6` | Temporary scratchpad registers | **No** (Caller-saved) |
+| `x8–x9`, `x18–x27` | `s0–s11` | Saved registers (must be restored) | **Yes** (Callee-saved) |
+
+::: {.callout-tip}
+A function that does not call any other functions is called a **leaf function**. Leaf functions can run entirely within CPU registers without needing memory.
+:::
+
+::: {.callout-note icon=false}
+## Exercise 3.5: Fibonacci with Subroutines
+
+1. Write a modular subroutine `fib` following the ABI:
+   * Input argument: `a0` holds $n$.
+   * Return value: `a0` returns $F_n$.
+   * Use temporary registers (`t0`–`t2`) to calculate the sequence.
+   * Return to caller using `ret` (`jalr x0, 0(ra)`).
+2. Write a `main` program that sets `a0 = 7`, calls `jal ra, fib`, and stops in an infinite loop (`j .`).
+3. Assemble the code, load it into your processor ROM, and verify in Digital that `a0` contains `13` ($F_7$) after returning.
+:::
+
+
+## Look Ahead: Registers are not enough
+
+Calculating Fibonacci numbers requires only a few registers. However, more complex algorithms, programs, or data structures cannot run on registers alone.
+
+Imagine what happens when a function needs to call another function. Each call will overwrite the `ra` register, losing the original return address. To avoid this, we must store return addresses somewhere. But what if functions are nested several levels deep?
+
+With only 32 registers, the processor runs out of space. In the next lab, we will implement **Data Memory** to store data, build the **Load-Store Unit** to interface with it, and introduce the **Call Stack** to handle nested functions and register preservation.

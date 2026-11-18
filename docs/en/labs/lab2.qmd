@@ -1,0 +1,382 @@
+---
+title: "Birth of ISA"
+author: "Łukasz Kmiecik"
+---
+
+## Introduction
+
+In this laboratory, you will learn how to control a processor with instructions, what instructions are, and what constitutes an Instruction Set Architecture (ISA). You will implement a few fundamental RISC-V instructions, a register file, and an instruction decoder.
+
+## Immediate Instructions (I-Type)
+
+While implementing the ALU in Lab 1, you selected the desired operation by passing control bits to a multiplexer. Those bits, together with inputs $A$ and $B$, effectively functioned as an instruction for your ALU — the selector bits acted as an **operation code** (opcode), with data passed into the ALU as inputs.
+
+An opcode commonly refers to a combination of bits representing an operation executable by the processor (e.g., `0000` for ADD, `1000` for SUB). In modern and more complex processors, opcodes typically encode a broad category of operations (such as ALU operations, memory operations, or branches). All the supported instructions, combined with the rules governing processor implementation, form what we call an **Instruction Set Architecture (ISA)**.
+
+Popular ISAs include **x86-64** used in Intel and AMD processors, **ARM** powering mobile devices and Apple Silicon, **MIPS**, IBM's **PowerPC**, and **RISC-V** — the open instruction set used throughout this course.
+
+::: {.callout-note collapse="true"}
+## Learn More: CISC vs. RISC
+
+- [Instruction Set Architecture - Wikipedia](https://en.wikipedia.org/wiki/Instruction_set_architecture)
+- [x86-64 - Wikipedia](https://en.wikipedia.org/wiki/X86-64)
+- [ARM - history part 1](https://www.youtube.com/watch?v=nIwdhPOVOUk) [@yt:arm-hist-p1]
+
+::: 
+
+### Immediate Values in Instructions
+
+Data provided to the processor directly within the instruction itself is called an **immediate value**. Immediates allow programmers to work with constants, pointers, and offsets without needing to load them from external memory beforehand.
+
+Encoding an immediate directly inside an instruction requires reserving a substantial portion of the instruction's bits, leaving less room for the opcode, register addresses, and other flags. This trade-off is fundamental to fixed-size instruction sets. Some architectures (such as x86) utilize variable-length instructions to provide arbitrary immediate sizes, but this comes at the expense of highly complex decoding circuitry.
+
+RISC-V operates on fixed-size 32-bit instructions using six primary encoding formats. Instructions are grouped by functionality into extensions. In our laboratory, we focus on **RV32I** — the 32-bit integer base set required for any RISC-V processor.
+
+Let's start with I-type instructions:
+```
+ 31                  20 19      15 14   12 11      7 6            0
++----------------------+----------+-------+---------+--------------+
+|      imm[11:0]       |   rs1    |funct3 |   rd    |    opcode    |
++----------------------+----------+-------+---------+--------------+
+        12 bits           5 bits   3 bits   5 bits       7 bits
+```
+
+RISC-V uses three main fields to decode the desired operation:
+
+* **`opcode` (7 bits):** Identifies the general category of the instruction and its encoding format. For computational immediate operations (`addi`, `andi`, `slli`, etc.), `opcode = 0010011` (`0x13`, `OP-IMM`).
+* **`funct3` (3 bits):** Selects the specific operation within that group.
+* **`funct7` (7 bits):** Used in R-type instructions (and shift instructions) for alternative variants of an operation.
+
+For example:
+```
+Opcode -> ALU operation
+Funct3 -> addition
+funct7 -> alternative version of addition -> subtraction
+```
+
+Notice how closely this matches the ALU control code from Lab 1! In Lab 1, `ALUCtrl[3:0]` was formed by combining:
+
+$$\text{ALUCtrl} = [\text{funct7}[5], \, \text{funct3}]$$
+
+This allows a near-direct interface between instruction fields and your ALU.
+
+### Immediate Encoding & Sign Extension
+
+A 32-bit instruction cannot contain an immediate of the same width. Therefore, RISC-V embeds a 12-bit constant (`imm[11:0]`). Before this value can be operated on by the 32-bit ALU, it must be **sign-extended** to the full 32-bit width.
+
+Because manually wiring bit splitters and sign-extension wires in Digital is tedious and prone to index errors, a pre-built component **`extend`** is provided in `lib/extend.dig`. This module detects the instruction format, extracts the immediate, and sign-extends it to 32 bits.
+
+::: {.callout-note icon=false}
+## Exercise 2.1: Immediate Decoding
+
+Extract the immediate, `funct3`, and `funct7` fields and use them to control your 32-bit ALU:
+
+1. Create a new schematic with input pins for the 32-bit instruction and operand data.
+2. Insert the `extend` component and connect all instruction bits to it. Connect its 32-bit sign-extended output to input `B` of your ALU.
+3. Wire instruction bits `[14:12]` (`funct3`) and `inst[30]` (`funct7[5]`) into the ALU's `ALUCtrl` inputs.
+4. Test the design by manually applying instruction bit patterns and verifying the ALU outputs.
+:::
+
+::: {.callout-tip}
+Since only one immediate is provided in the instruction, tie ALU input `A` to a constant value, an input pin, or loop it to the ALU output.
+:::
+
+## Registers & Register File (R-Type)
+
+In I-type instructions, there is a 5-bit field called **`rd`** (destination register). It specifies which register should receive and store the result of the operation after execution. This brings us to the introduction of registers.
+
+Computers need to store intermediate data between operations. External memory is relatively slow and would create a huge bottleneck if the processor had to read and write from it for every single arithmetic operation. 
+
+To prevent this bottleneck, processors contain internal, ultra-fast storage elements called **registers**, used as high-speed sources for operands and destinations for results. A register is essentially a vector of flip-flops. Grouped together near the execution units, they form the **Register File (RegFile)**.
+
+::: {.callout-note}
+Registers are classified based on their role:
+
+- **GPR (General-Purpose Registers):** Used inside the Register File to hold program variables and working data.
+- **CSR (Control and Status Registers):** Special-purpose registers used to configure processor behavior, manage timers, and handle interrupts.
+:::
+
+### Register File Architecture
+
+In RISC-V, there are 32 General-Purpose Registers, designated `x0` through `x31`:
+
+* **`x0`:** Hardwired permanently to ground (`0`). Reading `x0` always returns `0`, and writes to `x0` are discarded.
+* Standard software convention (ABI) assigns specific roles to each register:
+
+| Register | ABI Name | Description |
+|:----------------------:|:------------------:|:-----------------------------------------------------------------|
+| `x0` | `zero` | Hardwired constant 0 |
+| `x1` | `ra` | Return address (for function calls) |
+| `x2` | `sp` | Stack pointer |
+| `x3` | `gp` | Global pointer |
+| `x4` | `tp` | Thread pointer |
+| `x5`–`x7`, `x28`–`x31` | `t0`–`t6` | Temporary / scratchpad registers |
+| `x8`–`x9`, `x18`–`x27` | `s0`–`s11` | Saved registers (preserved across calls) |
+| `x10`–`x17` | `a0`–`a7` | Function arguments and return values |
+
+In Digital, an ISA-compliant Register File component **`regfile_rv`** is provided in `lib/regfile_rv.dig`:
+
+* **Inputs:** `rs1[4:0]` (read address 1), `rs2[4:0]` (read address 2), `rd[4:0]` (write address), `wd[31:0]` (write data), `we` (write enable), and `clock`.
+* **Outputs:** `rd1[31:0]` (data from register `rs1`), `rd2[31:0]` (data from register `rs2`).
+
+### R-Type Instruction Format
+
+Instructions using registers without introducing immediate values are encoded using the R-type format. Each has two source registers (`rs1`, `rs2`) and a destination register (`rd`). As you can see, `funct3` and `funct7` are identical as in I instructions, so control signals for the ALU should stay the same.
+
+## Instruction Decoder
+
+Instruction decoding in RISC-V follows a simple hierarchical path, as depicted in @fig-decoding-flow:
+
+```{mermaid}
+%%| label: fig-decoding-flow
+%%| fig-cap: "Hierarchical Instruction Decoding Flow"
+flowchart TD
+    Instr["Instruction [31:0]"] --> |opcode| Op["Instruction Group"]
+    Op --> |funct3| f3["Operation Type"]
+    f3 --> |funct7| f7["Alternative Variant"]
+```
+
+### ROM-based Decoding
+
+To avoid building complex decoding logic out of individual logic gates, a cleaner approach in Digital is to use a **ROM** or **Look-Up Table (LUT)**. The decoder inspects the opcode and outputs the control flags needed to orchestrate the datapath.
+
+Because standard 32-bit RISC-V instructions always have their lowest bits `opcode[1:0] == 11`, we can shrink the size of our decoder by decoding only bits `opcode[6:2]`, as shown in @fig-decoder-signals:
+
+```{mermaid}
+%%| label: fig-decoder-signals
+%%| fig-cap: "Main Decoder Interface and Control Signals"
+flowchart LR
+    Opcode["opcode[6:2] (5 bits)"] --> Decoder["Decoder (ROM / LUT)"]
+    Decoder --> ALUSrc["ALUSrc (0=rs2, 1=imm)"]
+    Decoder --> RegWrite["RegWrite (Enable write to rd)"]
+```
+
+For our current set of instructions, the decoder generates:
+
+1. **`ALUSrc`:** Selects whether the second operand for the ALU comes from register `rs2` (`0`, for R-type) or the sign-extended immediate (`1`, for I-type).
+2. **`RegWrite`:** Enables writing the ALU result into destination register `rd` on the rising clock edge.
+
+Later you will need to add more flags based on your design. It is not advised to combine funct3 with opcode as an output for decoder.
+
+::: {.callout-note icon=false}
+## Exercise 2.2: Decoder and Register File
+
+Implement the decoder and connect it with the Register File:
+
+1. Use a small ROM or Look-Up Table (LUT) for decoding `opcode[6:2]`.
+2. Connect `regfile_rv` to supply operands `rs1` and `rs2`.
+3. Add a multiplexer before ALU input `B` controlled by `ALUSrc` to choose between `rs2` and `imm32`.
+4. Connect the ALU output back to the Register File write data port (`wd`), and wire `RegWrite`.
+5. Test the design by manually inputting instruction words and clocking the circuit.
+
+**How to use ROM in Digital:**
+
+1. Right-click the ROM component to enter its configuration.
+2. Click `Edit` to type the output values into the appropriate address cells. You can enter values in hexadecimal (`0x80A`), binary (`0b01001`), or decimal.
+3. The address equals the row address plus the column address.
+:::
+
+## 32-bit Constants & Upper Immediates (U-Type)
+
+Take a close look at the I-type immediate field: it has only **12 bits**. With two's complement sign extension, the largest positive number you can load with `addi` is:
+$$+2047 \quad (\text{0x7FF})$$
+And the most negative number is $-2048$ (`0x800`).
+
+### The Need for Large Constants
+
+What if your code needs to work with a 32-bit constant, pointer, or memory address?
+
+RISC-V solves this with the **U-type (Upper Immediate)** format and the **`LUI` (Load Upper Immediate)** instruction:
+
+```
+ 31                                    12 11      7 6            0
++----------------------------------------+---------+--------------+
+|               imm[31:12]               |   rd    |    opcode    |
++----------------------------------------+---------+--------------+
+                 20 bits                    5 bits       7 bits
+```
+
+* **`opcode`:** `0110111` (`0x37`, `LUI`).
+* **Operation:** Loads the 20-bit immediate directly into the **upper 20 bits** of register `rd`, filling the lowest 12 bits with zeros:
+  $$rd \leftarrow \{imm[31:12], \, 12\text{'b}0\}$$
+
+
+#### The Canonical 32-bit Loading Idiom: `lui` + `addi`
+
+To load an arbitrary 32-bit value (e.g., `0x12345678`) into register `x1`, the compiler emits a two-instruction sequence:
+
+```asm
+lui  x1, 0x12345       # x1 = 0x12345000 (upper 20 bits loaded, lower 12 bits zeroed)
+addi x1, x1, 0x678     # x1 = 0x12345000 + 0x678 = 0x12345678
+```
+
+In RISC-V assembly, the pseudo-instruction `li x1, 0x12345678` automatically expands into this exact pair.
+
+## Hardware Challenges & Architectural Trade-offs
+
+As we introduce both immediate operations and `LUI`, our datapath encounters specific decoding collisions that require careful architectural handling.
+
+### 1. The Subtraction Trap: Why `addi` Needs Special Decoding
+
+At first glance, it is tempting to connect instruction bit `inst[30]` directly to `ALUCtrl[3]` for all instructions. In R-type, this cleanly selects between `add` (`inst[30] = 0`) and `sub` (`inst[30] = 1`).
+
+However, this creates a subtle and devastating hardware bug in I-type instructions!
+
+**Why is there no `subi` in RISC-V?**
+RISC-V intentionally **omits a `subi` instruction**. Why? Because immediate values are signed two's complement numbers. Subtracting a constant $K$ is mathematically identical to adding $-K$:
+$$\text{subi } rd, rs1, K \iff \text{addi } rd, rs1, -K$$
+
+**The Bit Collision on `inst[30]`**
+Now examine the layout of an I-type instruction. Where `funct7` used to be, there is now the 12-bit immediate constant `imm[11:0]`:
+
+* Bit `inst[30]` is actually **`imm[10]`**!
+* If a programmer writes:
+  ```asm
+  addi x1, x0, -1      # imm = 0xFFF -> imm[10] = 1 (inst[30] = 1)
+  addi x2, x0, 1024    # imm = 0x400 -> imm[10] = 1 (inst[30] = 1)
+  ```
+If your datapath blindly wires `inst[30]` into `ALUCtrl[3]`, executing `addi x1, x0, -1` will cause `ALUCtrl[3]` to assert high (`1`). The ALU will mistakenly switch to **subtraction** (`1000`) instead of addition (`0000`)! The CPU would calculate $\text{x0} - (-1) = +1$ instead of $-1$!
+
+::: {.callout-important}
+## The Architectural Rule for Subtraction
+In the ALU, subtraction must **only** be triggered when the instruction is genuinely an R-type `sub`. For `addi`, subtraction must be strictly disabled (`ALUCtrl[3] = 0`), regardless of what value happens to appear in immediate bit `inst[30]`.
+
+*(Note on shifts: For shift instructions, `inst[30]` is legitimate in both R-type and I-type to differentiate `sra`/`srai` from `srl`/`srli`, but its `funct3` is `101`, not `000`).*
+:::
+
+### 2. The Missing funct3 in U-Type (LUI)
+
+U-type instructions do **not** have `funct3` or `funct7` fields. Furthermore, the bit positions where `funct3` normally resides (`inst[14:12]`) are part of the immediate constant itself.
+
+If the ALU control inputs were connected directly to instruction bits `inst[14:12]`, executing `lui` with different immediate values would cause the ALU to unpredictably switch operations (sometimes doing `XOR`, sometimes `SUB`, sometimes `SLT`)!
+
+To load the immediate into `rd` unchanged, the ALU must perform an **addition with zero**:
+$$\text{Result} = 0 + \text{imm}_U = \text{imm}_U$$
+This requires that the ALU control lines be forced to `ADD` (`0000`) whenever a U-type instruction is executed, regardless of what bits happen to appear in `inst[14:12]`.
+
+### 3. Forcing Zero on ALU Input A
+
+In standard R-type and I-type instructions, ALU Input A is fed by `rd1` (the data read from register `rs1`). But in `LUI`, bits `[19:15]` are also part of the immediate constant, not a register index. The ALU needs a value of $0$ on Input A.
+
+### Architectural Strategies & Implementation Options
+
+As a computer architect, there is no single "mandatory" way to solve these challenges. Deciding how to partition control logic and structure your control signals is a core digital design skill. Here are practical strategies to guide your implementation:
+
+**Controlling the ALU:**
+
+1. **Approach A: Dedicated ALU Control Logic (Hierarchical Decoding)**  
+   The main decoder (ROM/LUT) inspects `opcode[6:2]` and outputs an abstract 2-bit signal **`ALUOp`**:
+
+   - `ALUOp = 00`: Force ADD (used for `lui`, and later for `lw`/`sw`).
+   - `ALUOp = 01`: I-type arithmetic mode (decode `funct3`, allow `inst[30]` only for shifts, forbid subtraction for `addi`).
+   - `ALUOp = 10`: R-type mode (use both `funct3` and `inst[30]` directly).  
+   A small sub-circuit (or LUT) takes `ALUOp`, `funct3`, and `inst[30]` and generates the final 4-bit `ALUCtrl[3:0]`.
+
+2. **Approach B: Direct Override Flags from the Main Decoder**  
+   The main decoder directly outputs specific override flags:
+
+   - **`ForceAdd` (or `ALUOp_ADD`):** When active (for `lui`), a multiplexer forces `ALUCtrl = 0000` (ADD).
+   - **`SubDisable`:** When active (for I-type `addi`), logic gates mask bit `inst[30]` so it cannot trigger subtraction.
+
+**Supplying Zero on Operand A:**
+
+- **Option 1 (ALU Input MUX):** Place a 2:1 multiplexer before ALU Input A, selecting between register data `rd1` and a hardwired constant `0` (controlled by a flag such as `ALUSrcA` or `ForceZeroA`).
+- **Option 2 (Register File Address Override):** Place a multiplexer on the Register File read address `rs1`, forcing `rs1 = 0` (`x0`, which always reads zero) whenever executing `lui`.
+
+::: {.callout-note icon=false}
+## Exercise 2.3: Control Logic & Zero Override
+
+1. **Zero Override for `lui`:** Implement logic (e.g., via a 2:1 multiplexer on ALU Input A or register address override) to feed a constant `0` to ALU input A when executing `lui`.
+2. **ALU Control Refinement:** Ensure bit `inst[30]` is masked during `addi` so that negative immediates do not trigger subtraction, and force the ALU operation to `ADD` (`0000`) for `lui`.
+:::
+
+::: {.callout-tip}
+<!-- Maybe introduce dedicated spreadsheet for easy decoder modifications -->
+Use a spreadsheet or notepad to map out your flag configuration table. Tracking the control signals for each opcode systematically makes adding future instructions much easier.
+:::
+
+## Continuous Datapath: Program Counter & ROM
+
+So far, we have manually supplied instructions. To build an autonomous computer, the processor must automatically fetch instructions from memory sequentially in each clock cycle, as shown in @fig-pc-workflow.
+
+```{mermaid}
+%%| label: fig-pc-workflow
+%%| fig-cap: "Program Counter and Instruction Memory Datapath"
+flowchart LR
+    Clock["Clock"] --> PC["Program Counter (PC)"]
+    PC --> Add4["Adder (+4)"] --> PC
+    PC --> ROM["Instruction Memory (ROM)"]
+    ROM --> Instr["Instruction Word [31:0]"]
+```
+
+### Program Counter (PC)
+
+The **Program Counter (PC)** is a 32-bit register with clock and reset inputs. It holds the memory address of the current instruction being executed. 
+
+In every clock cycle, the PC increments by 4 bytes:
+$$PC_{\text{next}} = PC + 4$$
+
+**Why $+4$?**
+Each RV32I instruction is 32 bits (4 bytes) wide, and RISC-V uses byte-addressed memory. Advancing to the next sequential instruction requires adding 4 to the current address.
+
+### Instruction Memory (ROM)
+
+A **ROM** component in Digital stores the machine-code program. Connect the address lines of the ROM to `PC[31:2]` (since Digital's ROM addresses 32-bit words, bits `[1:0]` are ignored). The ROM outputs the 32-bit instruction word, which is routed to the decoder, register file, and immediate extender.
+
+::: {.callout-note icon=false}
+## Exercise 2.4: Implement Instruction Memory and PC
+
+1. Place a 32-bit register component for the **PC** with clock and reset inputs.
+2. Connect a 32-bit `Adder` with a constant `4` to compute $PC + 4$, routing its sum back to the PC data input.
+3. Place a **ROM** component for instruction storage. Connect `PC[31:2]` to its address port (bits `[1:0]` are ignored for word alignment).
+4. Route the ROM's 32-bit instruction output to the instruction decoder, register file, and immediate extender.
+:::
+
+## Assembly & Datapath Verification
+
+To verify our automated datapath, consider this short sequence of assembly instructions:
+
+```asm
+addi x1, x0, 5          # x1 = 0 + 5 = 5
+addi x2, x0, 10         # x2 = 0 + 10 = 10
+add  x3, x1, x2         # x3 = 5 + 10 = 15
+slli x4, x3, 1          # x4 = 15 << 1 = 30
+sub  x5, x4, x1         # x5 = 30 - 5 = 25
+addi x5, x5, -5         # x5 = 25 + (-5) = 20  (Tests that negative imm does NOT trigger sub!)
+lui  x6, 0x12345        # x6 = 0x12345000      (Upper Immediate test!)
+```
+
+When assembled according to the RISC-V specification, these instructions encode into the following 32-bit hexadecimal machine codes:
+
+| Address | Assembly Instruction | Field Values | Hexadecimal Code | Expected Result |
+|:---------:|:-----------------------|:-------------------------------------------|:----------------:|:---------------:|
+| `0x00` | `addi x1, x0, 5` | `imm=5`, `rs1=0`, `funct3=0`, `rd=1`, `opcode=0x13` | `0x00500093` | `x1 = 5` |
+| `0x04` | `addi x2, x0, 10` | `imm=10`, `rs1=0`, `funct3=0`, `rd=2`, `opcode=0x13` | `0x00A00113` | `x2 = 10` |
+| `0x08` | `add x3, x1, x2` | `funct7=0`, `rs2=2`, `rs1=1`, `funct3=0`, `rd=3`, `opcode=0x33` | `0x002081B3` | `x3 = 15` |
+| `0x0C` | `slli x4, x3, 1` | `shamt=1`, `rs1=3`, `funct3=1`, `rd=4`, `opcode=0x13` | `0x00119213` | `x4 = 30` |
+| `0x10` | `sub x5, x4, x1` | `funct7=0x20`, `rs2=1`, `rs1=4`, `funct3=0`, `rd=5`, `opcode=0x33` | `0x401202B3` | `x5 = 25` |
+| `0x14` | `addi x5, x5, -5` | `imm=-5 (0xFFB)`, `rs1=5`, `funct3=0`, `rd=5`, `opcode=0x13` | `0xFFB28293` | `x5 = 20` |
+| `0x18` | `lui x6, 0x12345` | `imm=0x12345`, `rd=6`, `opcode=0x37` | `0x12345337` | `x6 = 0x12345000` |
+
+::: {.callout-note icon=false}
+## Exercise 2.5: Datapath Test Run
+
+1. Insert the **Instruction ROM**. Right-click it, click `Edit`, and paste the seven hexadecimal codes from the table above starting at address `0`.
+2. Start the simulation. Step through the clock cycles and verify that the registers update as expected:
+    - Cycle 1: `x1 = 5`
+    - Cycle 2: `x2 = 10`
+    - Cycle 3: `x3 = 15`
+    - Cycle 4: `x4 = 30`
+    - Cycle 5: `x5 = 25`
+    - Cycle 6: `x5 = 20` (confirms negative immediate did NOT trigger subtraction)
+    - Cycle 7: `x6 = 0x12345000` (confirms upper 20 bits loaded correctly via `lui`)
+
+To toggle the clock, click on the clock component while in simulation.
+:::
+
+## Look Ahead: Navigating Code!
+
+You have built a functioning single-cycle processor datapath capable of fetching, decoding, and executing arithmetic and logic instructions autonomously in hardware! 
+
+In the next laboratory, we will introduce Branch and Jump instructions so your processor can execute conditional statements, loops, and function calls.
+

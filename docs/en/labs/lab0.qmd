@@ -1,0 +1,180 @@
+---
+title: "Software and tools environment"
+author: "Łukasz Kmiecik"
+---
+
+## Laboratory environment
+
+Before designing processor datapaths and running machine code, you need a functional development environment. This course relies on three primary software components:
+
+1. **Digital (by Helmut Neemann):** A modern digital circuit simulator used to design, simulate, and export our RV32I processor.
+2. **RISC-V GNU Toolchain:** A cross-compiler (`gcc`, `as`, `ld`, `objdump`) that translates RISC-V assembly and C source code into bare-metal machine code.
+3. **Python 3 & Automation Scripts:** Headless testing utilities and the hardware UART programmer tool.
+
+You have two options for setting up your environment:
+
+- **Option A (Recommended): VS Code Dev Container / Docker** — Fully automated, one-click environment with all compilers and tools preinstalled.
+- **Option B: Native Local Installation** — Installing Java, Digital, and the RISC-V toolchain directly on Linux, macOS, or Windows.
+
+## Dev Container (Recommended)
+
+The course repository includes a ready-to-use Dev Container configuration. This ensures that toolchain versions, paths, and dependencies match exactly without interfering with your host system.
+
+### Prerequisites
+
+1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS) or Docker Engine (Linux).
+2. Install [Visual Studio Code](https://code.visualstudio.com/).
+3. Install the **Dev Containers** extension (`ms-vscode-remote.remote-containers`) in VS Code.
+
+### Launching the Environment
+
+1. Open the course repository folder in VS Code:
+   ```bash
+   code i2ca/
+   ```
+
+2. Press `Ctrl+Shift+P` (or `Cmd+Shift+P` on macOS) to open the Command Palette.
+3. Type and select: **Dev Containers: Reopen in Container**.
+4. VS Code will build the container image and mount your workspace. Once opened, all tools (`digital`, `riscv64-unknown-elf-gcc`, `python3`, `java`) are ready in the integrated terminal.
+
+::: {.callout-tip}
+## Open-Source Alternative: DevPod
+If you prefer not using VS Code or want an open-source, client-only container launcher, you can use [DevPod](https://devpod.sh/). DevPod supports the same `.devcontainer` configuration, works with Docker or Podman, and integrates with other editors such as Neovim or JetBrains IDEs.
+:::
+
+## Native Installation
+
+If you prefer running tools directly on your host operating system, follow the platform-specific steps below.
+
+### 1. Java Runtime Environment (JRE)
+
+Digital is written in Java and requires **Java 17 or Java 21**.
+
+::: {.panel-tabset}
+### Linux (Ubuntu / Debian)
+```bash
+sudo apt update
+sudo apt install default-jre-headless openjdk-21-jre
+```
+Verify the installation:
+```bash
+java -version
+```
+
+### macOS
+Install OpenJDK using [Homebrew](https://brew.sh/):
+```bash
+brew install openjdk@21
+```
+
+### Windows
+Download and install the **Temurin OpenJDK 21 (LTS)** installer from [Adoptium](https://adoptium.net/). Ensure the installer option *"Add to PATH"* is enabled.
+:::
+
+### 2. Helmut Neemann's Digital Simulator
+
+1. Download the latest `Digital.jar` executable archive from the official GitHub releases:
+   - [Helmut Neemann Digital Releases](https://github.com/hneemann/Digital/releases)
+2. Place `Digital.jar` in an accessible directory (e.g. `~/Digital/Digital.jar` or `/opt/digital/Digital.jar`).
+3. On Linux/macOS, you can create a convenient wrapper script in `/usr/local/bin/digital`:
+   ```bash
+   sudo mkdir -p /opt/digital
+   sudo mv Digital.jar /opt/digital/Digital.jar
+   cat << 'EOF' | sudo tee /usr/local/bin/digital > /dev/null
+   #!/bin/sh
+   exec java -jar /opt/digital/Digital.jar "$@"
+   EOF
+   sudo chmod +x /usr/local/bin/digital
+   ```
+
+4. Test running Digital:
+   ```bash
+   digital
+   ```
+   A graphical window with an empty digital canvas should appear.
+
+### 3. RISC-V Bare-Metal GCC Toolchain
+
+We use the 32-bit bare-metal RISC-V target (`-march=rv32i -mabi=ilp32`). Note that the 64-bit cross-compiler `riscv64-unknown-elf-gcc` includes full 32-bit compilation support when passing `-march=rv32i`.
+
+::: {.panel-tabset}
+### Linux (Ubuntu 22.04 / 24.04)
+```bash
+sudo apt update
+sudo apt install gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf
+```
+
+### macOS
+Using Homebrew:
+```bash
+brew tap riscv-software-src/riscv
+brew install riscv-gnu-toolchain
+```
+
+### Windows
+Download the pre-built **xPack GNU RISC-V Embedded GCC** archive from [xPack Releases](https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases) and add its `bin/` directory to your system `PATH`.
+:::
+
+Verify the compiler:
+```bash
+riscv64-unknown-elf-gcc --version
+```
+
+### 4. Python Environment
+
+The course automated verification and hardware flashing tools require **Python 3.10+** and `pyserial`.
+
+Install dependencies from the course package:
+```bash
+pip install -r lab-package/requirements.txt
+```
+
+## Verifying the Toolchain
+
+To confirm that your environment is fully operational, run these two quick sanity checks in your terminal:
+
+### 1. Compile a RISC-V Assembly Instruction
+```bash
+echo "addi x1, x0, 42" | riscv64-unknown-elf-gcc -march=rv32i -mabi=ilp32 -c -x assembler - -o /tmp/test.o
+riscv64-unknown-elf-objdump -d /tmp/test.o
+```
+You should see:
+```text
+Disassembly of section .text:
+
+00000000 <.text>:
+   0:	02a00093          	li	ra,42
+```
+
+### 2. Run the Headless Core Verifier Help
+```bash
+python3 lab-package/scripts/verify_core.py --help
+```
+You should see the verifier usage flags (`--circ`, `--cmem`, `--cycles`, `-v`).
+
+## Repository Structure Tour
+
+Before proceeding to Lab 1, familiarize yourself with the structure of `lab-package/`:
+
+```text
+lab-package/
+├── hardware/
+│   ├── digital/
+│   │   ├── lib/                  # Predefined reusable subcircuits (regfile_rv.dig, extend.dig, CMEM.dig)
+│   │   └── testbenches/          # Validation schematics (alu_testbench.dig)
+│   ├── top_wrapper.v             # Nexys A7 FPGA top-level wrapper
+│   └── nexys4ddr.xdc             # Pin constraints for Vivado
+├── scripts/
+│   ├── verify_core.py            # Automated headless core verification tool
+│   ├── CoreVerifier.java         # Headless Java simulation engine for Digital
+│   ├── flash_rv32.py             # USB-UART hardware programmer script
+│   └── tests_rv32i/              # Official RV32I compliance machine-code tests (.hex, .s, .dump)
+├── software/
+│   ├── crt0.s                    # Bare-metal assembly startup code (Lab 6)
+│   ├── link.ld                   # Linker script defining memory layout (Lab 6)
+│   ├── main.c                    # C demo source code (Lab 6)
+│   └── Makefile                  # Compilation recipes
+└── requirements.txt              # Python dependencies (pyserial)
+```
+
+With your tools verified and the repository layout clear, you are ready to begin **Lab 1: From Gate to ALU**!
